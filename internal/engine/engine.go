@@ -88,12 +88,12 @@ func (e *Engine) RegisterClinic(c domain.Clinic) {
 	e.SLA.Register(c.ID, c.GuaranteedApptsPerMonth)
 	for _, plat := range []domain.Platform{domain.PlatformMeta, domain.PlatformGoogle} {
 		e.Budget.RegisterArm(domain.Arm{
-			ID:       fmt.Sprintf("%s:%s:%s", c.ID, plat, c.Segment),
-			ClinicID: c.ID,
-			Platform: plat,
-			Campaign: "default",
-			Creative: "v1",
-			Segment:  c.Segment,
+			ID:             fmt.Sprintf("%s:%s:%s", c.ID, plat, c.Segment),
+			ClinicID:       c.ID,
+			Platform:       plat,
+			Campaign:       "default",
+			Creative:       "v1",
+			Segment:        c.Segment,
 			AvgCostPerLead: defaultCPL(plat, c.Segment),
 			ClinicCapacity: c.DailyCapacity,
 			// Expected realised margin per qualified appointment: ticket × margin ×
@@ -275,7 +275,7 @@ func (e *Engine) reserveSlot(clinic domain.Clinic, p float64, now time.Time) (ti
 	defer e.bookMu.Unlock()
 	e.pruneLocked(now)
 	for off := 1; off <= bookingHorizonDays; off++ {
-		day := now.Truncate(24 * time.Hour).AddDate(0, 0, off)
+		day := now.Truncate(24*time.Hour).AddDate(0, 0, off)
 		if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
 			continue
 		}
@@ -302,7 +302,7 @@ func (e *Engine) clinicHasRoom(clinicID string, capacity int, now time.Time) boo
 	defer e.bookMu.Unlock()
 	e.pruneLocked(now)
 	for off := 1; off <= bookingHorizonDays; off++ {
-		day := now.Truncate(24 * time.Hour).AddDate(0, 0, off)
+		day := now.Truncate(24*time.Hour).AddDate(0, 0, off)
 		if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
 			continue
 		}

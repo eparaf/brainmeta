@@ -107,10 +107,10 @@ func (m *Marketing) UploadConversions(ctx context.Context, convs []datasource.Co
 	data := make([]map[string]any, 0, len(convs))
 	for _, c := range convs {
 		data = append(data, map[string]any{
-			"event_name":  "Purchase",
-			"event_time":  c.At.Unix(),
+			"event_name":    "Purchase",
+			"event_time":    c.At.Unix(),
 			"action_source": "business_messaging",
-			"custom_data": map[string]any{"value": c.Value, "currency": "TRY", "content_name": c.EventName},
+			"custom_data":   map[string]any{"value": c.Value, "currency": "TRY", "content_name": c.EventName},
 		})
 	}
 	body, _ := json.Marshal(map[string]any{"data": data, "access_token": m.Token})

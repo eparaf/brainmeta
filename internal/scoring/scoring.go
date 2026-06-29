@@ -151,7 +151,7 @@ func featureVector(f domain.LeadFeatures) []float64 {
 		clampNorm(1.0-f.FirstResponseSecs/300.0, -1, 1), // faster reply -> higher
 		clampNorm(f.MessagesExchanged/10.0, 0, 1),
 		clampNorm(1.0-f.DistanceKm/40.0, -1, 1), // closer -> higher
-		mathx.SinHour(f.HourOfDay),               // cyclic time: sin AND cos, no aliasing
+		mathx.SinHour(f.HourOfDay),              // cyclic time: sin AND cos, no aliasing
 		mathx.CosHour(f.HourOfDay),
 		budgetNorm,
 		budgetKnown,

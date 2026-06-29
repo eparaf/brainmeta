@@ -16,10 +16,10 @@ import (
 
 // Loop wires outcomes back into the four learning surfaces.
 type Loop struct {
-	Scorer  *scoring.Engine
-	Budget  *budget.Engine
-	NoShow  *noshow.Predictor
-	SLA     *sla.Controller
+	Scorer *scoring.Engine
+	Budget *budget.Engine
+	NoShow *noshow.Predictor
+	SLA    *sla.Controller
 }
 
 // Ingest routes a single outcome to every model that can learn from it.

@@ -39,11 +39,16 @@ func (s *Server) handleWAVerify(w http.ResponseWriter, r *http.Request) {
 // handleWAInbound processes inbound WhatsApp messages: opt-out handling, then
 // the agent qualifies/decides and we reply via the Cloud API (inside 24h window).
 func (s *Server) handleWAInbound(w http.ResponseWriter, r *http.Request) {
-	defer w.WriteHeader(200) // ack fast so Meta doesn't retry
+	body, _ := io.ReadAll(r.Body)
+	// Verify the payload is genuinely from Meta (HMAC-SHA256 over the raw body).
+	if !whatsapp.VerifySignature(s.appSecret, r.Header.Get("X-Hub-Signature-256"), body) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	w.WriteHeader(200) // ack fast so Meta doesn't retry
 	if s.agent == nil {
 		return
 	}
-	body, _ := io.ReadAll(r.Body)
 	ins, err := whatsapp.ParseInbound(body)
 	if err != nil {
 		return

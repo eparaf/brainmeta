@@ -30,7 +30,7 @@ type Candidate struct {
 
 // ClinicSlot describes a clinic's routing parameters for this cycle.
 type ClinicSlot struct {
-	Clinic   domain.Clinic
+	Clinic    domain.Clinic
 	FreeSeats int     // remaining new-patient capacity this cycle
 	SLABias   float64 // ≥1, from the guarantee controller
 }

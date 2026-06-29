@@ -3,13 +3,33 @@ package whatsapp
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
+
+// VerifySignature validates Meta's X-Hub-Signature-256 header against the raw
+// request body using the app secret (HMAC-SHA256). Always verify inbound
+// webhooks in production so nobody can forge patient messages. Empty appSecret
+// disables the check (dev).
+func VerifySignature(appSecret, header string, body []byte) bool {
+	if appSecret == "" {
+		return true
+	}
+	sig := strings.TrimPrefix(header, "sha256=")
+	mac := hmac.New(sha256.New, []byte(appSecret))
+	mac.Write(body)
+	want := hex.EncodeToString(mac.Sum(nil))
+	return subtle.ConstantTimeCompare([]byte(sig), []byte(want)) == 1
+}
 
 // Cloud is a real WhatsApp Cloud API (Meta) client. It both RECEIVES inbound
 // messages (via the webhook handlers in the api package, which call ParseInbound
@@ -124,13 +144,17 @@ func ParseInbound(body []byte) ([]Inbound, error) {
 			Changes []struct {
 				Value struct {
 					Contacts []struct {
-						Profile struct{ Name string `json:"name"` } `json:"profile"`
-						WaID    string `json:"wa_id"`
+						Profile struct {
+							Name string `json:"name"`
+						} `json:"profile"`
+						WaID string `json:"wa_id"`
 					} `json:"contacts"`
 					Messages []struct {
 						From string `json:"from"`
 						Type string `json:"type"`
-						Text struct{ Body string `json:"body"` } `json:"text"`
+						Text struct {
+							Body string `json:"body"`
+						} `json:"text"`
 					} `json:"messages"`
 				} `json:"value"`
 			} `json:"changes"`

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,6 +28,7 @@ import (
 	"disci/brain/internal/consent"
 	"disci/brain/internal/datasource"
 	"disci/brain/internal/engine"
+	"disci/brain/internal/httpx"
 	"disci/brain/internal/meta"
 	"disci/brain/internal/persist"
 	"disci/brain/internal/reminder"
@@ -140,6 +142,7 @@ func loadEnvFile() {
 
 func runServe() {
 	loadEnvFile()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	cfg := config.Default()
 
 	// Entity store: Postgres if DATABASE_URL is set AND a driver is registered
@@ -214,7 +217,7 @@ func runServe() {
 	} else {
 		log.Println("whatsapp: not configured (set WHATSAPP_TOKEN + WHATSAPP_PHONE_NUMBER_ID)")
 	}
-	server.SetIntegrations(cloud, cons)
+	server.SetIntegrations(cloud, cons, os.Getenv("META_APP_SECRET"))
 
 	// Scheduled no-show reminders: 24h/2h approved-template nudges (needs live
 	// WhatsApp to actually send).
@@ -233,7 +236,21 @@ func runServe() {
 		handler = auth.Middleware(key, auth.ProtectV1)(handler)
 		log.Println("auth: X-API-Key required on /v1/*")
 	}
-	srv := &http.Server{Addr: addr, Handler: handler}
+	// Production middleware chain (outermost first): recover → request-id →
+	// structured logging → security headers → rate limit → body cap.
+	handler = httpx.Chain(handler,
+		httpx.Recover, httpx.RequestID, httpx.Logger, httpx.SecurityHeaders,
+		httpx.RateLimit(50, 100), httpx.MaxBody(1<<20),
+	)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      35 * time.Second, // headroom for synchronous LLM calls
+		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()

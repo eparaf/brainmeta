@@ -19,10 +19,10 @@ func TestScheduler24hAnd2hAndConsent(t *testing.T) {
 	now := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
 	clinics := []domain.Clinic{{ID: "c1", Name: "Klinik"}}
 	appts := []domain.Appointment{
-		{ID: "a1", ClinicID: "c1", Phone: "+90111", When: now.Add(23 * time.Hour)}, // → 24h
+		{ID: "a1", ClinicID: "c1", Phone: "+90111", When: now.Add(23 * time.Hour)},   // → 24h
 		{ID: "a2", ClinicID: "c1", Phone: "+90222", When: now.Add(90 * time.Minute)}, // → 2h
 		{ID: "a3", ClinicID: "c1", Phone: "+90333", When: now.Add(30 * time.Minute)}, // opted out
-		{ID: "a4", ClinicID: "c1", Phone: "", When: now.Add(time.Hour)},             // no phone → skip
+		{ID: "a4", ClinicID: "c1", Phone: "", When: now.Add(time.Hour)},              // no phone → skip
 	}
 	n := &mockNotifier{}
 	allowed := func(p string) bool { return p != "+90333" }

@@ -5,6 +5,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 )
@@ -18,7 +19,7 @@ func Middleware(apiKey string, protect func(path string) bool) func(http.Handler
 				next.ServeHTTP(w, r)
 				return
 			}
-			if presented(r) == apiKey {
+			if subtle.ConstantTimeCompare([]byte(presented(r)), []byte(apiKey)) == 1 {
 				next.ServeHTTP(w, r)
 				return
 			}

@@ -51,13 +51,13 @@ type Result struct {
 }
 
 type ClinicResult struct {
-	Name              string
-	Guaranteed        int
-	QualifiedAppts    int
-	Showed            int
-	Closed            int
-	Revenue           float64
-	GuaranteeMet      bool
+	Name           string
+	Guaranteed     int
+	QualifiedAppts int
+	Showed         int
+	Closed         int
+	Revenue        float64
+	GuaranteeMet   bool
 }
 
 // Setup builds a realistic 4-clinic Istanbul network and a matching hidden
@@ -180,11 +180,11 @@ func (w *World) makeLead(seq int, armID string, clinic domain.Clinic, theta floa
 	// Higher-theta arms tend to deliver higher-intent leads.
 	intent := clamp01(theta*2 + w.rng.NormFloat64()*0.15)
 	return domain.Lead{
-		ID:       fmt.Sprintf("lead-%d", seq),
-		ArmID:    armID,
-		ClinicID: clinic.ID, // single-tenant regime: arm belongs to a clinic
-		Segment:  clinic.Segment,
-		Platform: platformOfArm(armID),
+		ID:        fmt.Sprintf("lead-%d", seq),
+		ArmID:     armID,
+		ClinicID:  clinic.ID, // single-tenant regime: arm belongs to a clinic
+		Segment:   clinic.Segment,
+		Platform:  platformOfArm(armID),
 		CreatedAt: now,
 		Status:    domain.LeadNew,
 		Features: domain.LeadFeatures{
@@ -272,7 +272,7 @@ func (w *World) resolveOutcome(eng *engine.Engine, st *store.Memory, lead domain
 
 // ---- helpers -------------------------------------------------------------
 
-func clinicOfArm(armID string) string  { return strings.SplitN(armID, ":", 2)[0] }
+func clinicOfArm(armID string) string { return strings.SplitN(armID, ":", 2)[0] }
 func platformOfArm(armID string) domain.Platform {
 	parts := strings.Split(armID, ":")
 	if len(parts) >= 2 {

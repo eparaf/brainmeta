@@ -24,13 +24,17 @@ import (
 //go:embed web/index.html
 var indexHTML []byte
 
+// Version is the build version, set via -ldflags "-X disci/brain/internal/api.Version=...".
+var Version = "dev"
+
 // Server wraps the engine with HTTP routing.
 type Server struct {
 	eng   *engine.Engine
 	agent *agent.Agent
 
-	cloud   *whatsapp.Cloud // live WhatsApp Cloud API (nil → webhook send is skipped)
-	consent *consent.Store  // KVKK opt-out guard
+	cloud     *whatsapp.Cloud // live WhatsApp Cloud API (nil → webhook send is skipped)
+	consent   *consent.Store  // KVKK opt-out guard
+	appSecret string          // Meta app secret for webhook signature verification
 
 	sessions session.Store // conversation state (swap Memory→Redis for HA)
 }
@@ -48,10 +52,11 @@ func (s *Server) SetSessionStore(store session.Store) {
 	}
 }
 
-// SetIntegrations wires the live WhatsApp client (and shares a consent store) so
-// the webhooks can send replies and honour opt-outs. Call before serving.
-func (s *Server) SetIntegrations(cloud *whatsapp.Cloud, cons *consent.Store) {
+// SetIntegrations wires the live WhatsApp client, consent store, and Meta app
+// secret (for webhook signature verification). Call before serving.
+func (s *Server) SetIntegrations(cloud *whatsapp.Cloud, cons *consent.Store, appSecret string) {
 	s.cloud = cloud
+	s.appSecret = appSecret
 	if cons != nil {
 		s.consent = cons
 	}
@@ -61,13 +66,13 @@ func (s *Server) SetIntegrations(cloud *whatsapp.Cloud, cons *consent.Store) {
 func (s *Server) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	// Public webhooks (Meta calls these; not auth-gated).
-	mux.HandleFunc("GET /webhooks/whatsapp", s.handleWAVerify)   // Meta webhook verification
-	mux.HandleFunc("POST /webhooks/whatsapp", s.handleWAInbound) // inbound WhatsApp → agent
-	mux.HandleFunc("POST /webhooks/webform", s.handleWebform)    // website form lead → agent
+	mux.HandleFunc("GET /webhooks/whatsapp", s.handleWAVerify)     // Meta webhook verification
+	mux.HandleFunc("POST /webhooks/whatsapp", s.handleWAInbound)   // inbound WhatsApp → agent
+	mux.HandleFunc("POST /webhooks/webform", s.handleWebform)      // website form lead → agent
 	mux.HandleFunc("POST /webhooks/meta-leads", s.handleMetaLeads) // Meta Lead Ads → agent
 
-	mux.HandleFunc("POST /v1/whatsapp", s.handleWhatsApp)   // test console free-text → agent → brain
-	mux.HandleFunc("POST /v1/intake", s.handleIntake)       // structured survey answers → brain (deterministic)
+	mux.HandleFunc("POST /v1/whatsapp", s.handleWhatsApp)  // test console free-text → agent → brain
+	mux.HandleFunc("POST /v1/intake", s.handleIntake)      // structured survey answers → brain (deterministic)
 	mux.HandleFunc("POST /v1/leads", s.handleLead)         // a pre-qualified lead arrived
 	mux.HandleFunc("POST /v1/outcomes", s.handleOutcome)   // a result came back (feedback loop)
 	mux.HandleFunc("POST /v1/budget/plan", s.handleBudget) // run a budget allocation cycle
@@ -80,6 +85,14 @@ func (s *Server) Routes() *http.ServeMux {
 			agentName = s.agent.Provider()
 		}
 		writeJSON(w, 200, map[string]string{"status": "ok", "agent": agentName})
+	})
+	// Readiness: dependencies reachable enough to serve. Liveness is /healthz.
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		_ = s.eng.Clinics() // store reachable?
+		writeJSON(w, 200, map[string]any{"ready": true})
+	})
+	mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]string{"version": Version})
 	})
 	// Embedded console (catch-all GET). More specific routes above win, so this
 	// only serves the UI page itself.
@@ -118,11 +131,11 @@ func (s *Server) handleWhatsApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Phone    string  `json:"phone"`
-		ClinicID string  `json:"clinicId"`
-		ArmID    string  `json:"armId"`
-		Message  string  `json:"message"`
-		HourOfDay float64 `json:"hourOfDay"`
+		Phone      string  `json:"phone"`
+		ClinicID   string  `json:"clinicId"`
+		ArmID      string  `json:"armId"`
+		Message    string  `json:"message"`
+		HourOfDay  float64 `json:"hourOfDay"`
 		DistanceKm float64 `json:"distanceKm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -153,13 +166,13 @@ func (s *Server) handleWhatsApp(w http.ResponseWriter, r *http.Request) {
 // consistent and cannot hallucinate appointments. This is the "anket" path.
 func (s *Server) handleIntake(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		Phone     string  `json:"phone"`
-		ClinicID  string  `json:"clinicId"`
-		ArmID     string  `json:"armId"`
-		Segment   string  `json:"segment"`
-		Urgency   float64 `json:"urgency"`
-		BudgetTRY float64 `json:"budgetTry"`
-		HourOfDay float64 `json:"hourOfDay"`
+		Phone      string  `json:"phone"`
+		ClinicID   string  `json:"clinicId"`
+		ArmID      string  `json:"armId"`
+		Segment    string  `json:"segment"`
+		Urgency    float64 `json:"urgency"`
+		BudgetTRY  float64 `json:"budgetTry"`
+		HourOfDay  float64 `json:"hourOfDay"`
 		DistanceKm float64 `json:"distanceKm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
@@ -235,10 +248,10 @@ func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	allocs, lambda := s.eng.PlanBudget(days)
 	writeJSON(w, 200, map[string]any{
-		"daysInMonth": days,
+		"daysInMonth":  days,
 		"networkDaily": s.eng.NetworkDailyBudget(days),
-		"lambda":      lambda,
-		"allocations": allocs,
+		"lambda":       lambda,
+		"allocations":  allocs,
 	})
 }
 

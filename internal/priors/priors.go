@@ -8,23 +8,24 @@
 // land; the code reads from here, so there are no magic numbers in the motors.
 //
 // SOURCES (accessed 2026-06):
-//   [CPL-G]  WordStream Google Ads Benchmarks 2026 — dental CPC ≈ $8.00,
-//            dental CPL ≈ $50–$95.  wordstream.com/blog/2026-google-ads-benchmarks
-//   [CPL-F]  WordStream/LocaliQ Facebook Ads Benchmarks — dental CPL ≈ $76.71,
-//            CPC ≈ $9.78, CTR ≈ 1.05%.  localiq.com/blog/facebook-advertising-benchmarks
-//   [CONV]   First Page Sage 2025 / InfluxMD / Unbounce — healthcare paid-search
-//            prospect→patient ≈ 64%, paid-social ≈ 66%; healthcare PPC lead
-//            conversion 2.4–11%; phone leads convert 25–40% vs 2% for web forms.
-//   [NOSHOW] Henry Schein One 2024 Industry Report (dental no-show 7%→4%);
-//            broad practices 5–10%, cold new-patient leads ~20–30%.
-//   [REM]    Klara 2025 (SMS reminders −38% no-shows); MDPI Appl.Sci. 2025
-//            (automated system 18.55%→7.01%); reminder-only ≈ −25%,
-//            confirmation-request ≈ −40–60%.
-//   [PRICE]  Turkey dental tourism 2026 price guides (MedicalTourismCo,
-//            TurkeyTravelPlanner): single implant $300–$1,500; All-on-4
-//            $3,300–$6,600/arch; full veneer set $3,200–$8,000.
-//   [SPEED]  Invoca/InfluxMD 2025 — optimal lead response <10 min; after 30 min
-//            leads are ~21× less likely to convert.
+//
+//	[CPL-G]  WordStream Google Ads Benchmarks 2026 — dental CPC ≈ $8.00,
+//	         dental CPL ≈ $50–$95.  wordstream.com/blog/2026-google-ads-benchmarks
+//	[CPL-F]  WordStream/LocaliQ Facebook Ads Benchmarks — dental CPL ≈ $76.71,
+//	         CPC ≈ $9.78, CTR ≈ 1.05%.  localiq.com/blog/facebook-advertising-benchmarks
+//	[CONV]   First Page Sage 2025 / InfluxMD / Unbounce — healthcare paid-search
+//	         prospect→patient ≈ 64%, paid-social ≈ 66%; healthcare PPC lead
+//	         conversion 2.4–11%; phone leads convert 25–40% vs 2% for web forms.
+//	[NOSHOW] Henry Schein One 2024 Industry Report (dental no-show 7%→4%);
+//	         broad practices 5–10%, cold new-patient leads ~20–30%.
+//	[REM]    Klara 2025 (SMS reminders −38% no-shows); MDPI Appl.Sci. 2025
+//	         (automated system 18.55%→7.01%); reminder-only ≈ −25%,
+//	         confirmation-request ≈ −40–60%.
+//	[PRICE]  Turkey dental tourism 2026 price guides (MedicalTourismCo,
+//	         TurkeyTravelPlanner): single implant $300–$1,500; All-on-4
+//	         $3,300–$6,600/arch; full veneer set $3,200–$8,000.
+//	[SPEED]  Invoca/InfluxMD 2025 — optimal lead response <10 min; after 30 min
+//	         leads are ~21× less likely to convert.
 package priors
 
 import "disci/brain/internal/domain"

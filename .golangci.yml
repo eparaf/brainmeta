@@ -1,0 +1,25 @@
+# golangci-lint config — modest, signal-over-noise set used by mature Go repos.
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - gofmt
+    - misspell
+    - unconvert
+    - bodyclose
+    - nilerr
+
+issues:
+  exclude-rules:
+    # Tests may ignore some errors for brevity.
+    - path: _test\.go
+      linters: [errcheck]
+  max-issues-per-linter: 0
+  max-same-issues: 0

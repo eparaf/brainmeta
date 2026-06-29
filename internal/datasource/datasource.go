@@ -6,11 +6,11 @@
 //
 // Four real-world surfaces feed/drain the brain:
 //
-//	1. LeadSource   — inbound prospects        (Meta/Google "Click-to-WhatsApp",
-//	                                             WhatsApp Cloud API webhooks)
-//	2. AdPlatform   — spend & conversions      (Meta Marketing API, Google Ads API)
-//	3. ClinicPMS    — capacity, appts, outcomes(clinic practice-mgmt system / CRM)
-//	4. Messenger    — outbound reminders       (WhatsApp Cloud API send)
+//  1. LeadSource   — inbound prospects        (Meta/Google "Click-to-WhatsApp",
+//     WhatsApp Cloud API webhooks)
+//  2. AdPlatform   — spend & conversions      (Meta Marketing API, Google Ads API)
+//  3. ClinicPMS    — capacity, appts, outcomes(clinic practice-mgmt system / CRM)
+//  4. Messenger    — outbound reminders       (WhatsApp Cloud API send)
 //
 // The SyncService wires them to the engine on a schedule. Concrete adapters
 // (HTTP clients for each API) implement these interfaces; the ones here are
@@ -80,11 +80,11 @@ type AdPlatform interface {
 
 // Conversion is an offline conversion event uploaded to an ad platform.
 type Conversion struct {
-	ArmID     string
+	ArmID      string
 	ExternalID string  // platform click id (gclid / fbclid) for attribution
-	EventName string  // "qualified_appointment" | "showed" | "closed"
-	Value     float64 // TRY
-	At        time.Time
+	EventName  string  // "qualified_appointment" | "showed" | "closed"
+	Value      float64 // TRY
+	At         time.Time
 }
 
 // ---- Clinic side: capacity, appointments, outcomes ----------------------

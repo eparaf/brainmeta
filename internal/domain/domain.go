@@ -43,8 +43,8 @@ func (s Segment) AvgTicket() float64 {
 type Platform string
 
 const (
-	PlatformMeta   Platform = "meta"
-	PlatformGoogle Platform = "google"
+	PlatformMeta    Platform = "meta"
+	PlatformGoogle  Platform = "google"
 	PlatformOrganic Platform = "organic"
 )
 
@@ -80,24 +80,24 @@ type Clinic struct {
 type LeadStatus string
 
 const (
-	LeadNew        LeadStatus = "new"
-	LeadQualified  LeadStatus = "qualified"
-	LeadBooked     LeadStatus = "booked"
-	LeadShowed     LeadStatus = "showed"
-	LeadClosed     LeadStatus = "closed"
-	LeadLost       LeadStatus = "lost"
-	LeadNoShow     LeadStatus = "no_show"
+	LeadNew       LeadStatus = "new"
+	LeadQualified LeadStatus = "qualified"
+	LeadBooked    LeadStatus = "booked"
+	LeadShowed    LeadStatus = "showed"
+	LeadClosed    LeadStatus = "closed"
+	LeadLost      LeadStatus = "lost"
+	LeadNoShow    LeadStatus = "no_show"
 )
 
 // Lead is a prospective patient captured from an ad click / WhatsApp message.
 type Lead struct {
-	ID        string
-	Phone     string // patient WhatsApp number (for reminders / outbound)
-	Name      string
-	ClinicID  string // for the single-tenant regime; empty in marketplace regime
-	ArmID     string // which ad arm produced this lead (for credit assignment)
-	Segment   Segment
-	Platform  Platform
+	ID       string
+	Phone    string // patient WhatsApp number (for reminders / outbound)
+	Name     string
+	ClinicID string // for the single-tenant regime; empty in marketplace regime
+	ArmID    string // which ad arm produced this lead (for credit assignment)
+	Segment  Segment
+	Platform Platform
 
 	CreatedAt time.Time
 
@@ -127,13 +127,13 @@ type LeadFeatures struct {
 
 // LeadScore is the output of Motor 1.
 type LeadScore struct {
-	PQualify  float64 // P(lead is genuinely qualified)
-	PBook     float64 // P(books an appointment | qualified)
-	PShow     float64 // P(shows up | booked)
-	PClose    float64 // P(treatment closes | showed)
-	Ticket    float64 // expected revenue if closed (TRY)
-	Margin    float64 // expected margin (TRY)
-	EV        float64 // expected value of this lead to the network (TRY)
+	PQualify float64 // P(lead is genuinely qualified)
+	PBook    float64 // P(books an appointment | qualified)
+	PShow    float64 // P(shows up | booked)
+	PClose   float64 // P(treatment closes | showed)
+	Ticket   float64 // expected revenue if closed (TRY)
+	Margin   float64 // expected margin (TRY)
+	EV       float64 // expected value of this lead to the network (TRY)
 }
 
 // Appointment is a booked slot.

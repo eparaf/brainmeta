@@ -32,26 +32,26 @@ type Turn struct {
 // contract between the generative layer and the deterministic brain — frozen and
 // versioned so train/serve stay consistent.
 type Qualification struct {
-	Segment    domain.Segment `json:"segment"`
-	Treatment  string         `json:"treatment"`
-	Urgency    float64        `json:"urgency"` // 0..1
-	IntentScore float64       `json:"intent"`  // 0..1, how serious/ready
-	BudgetTRY  float64        `json:"budgetTry"` // currency-normalised; 0 if unknown
-	Locale     string         `json:"locale"`    // "tr" | "en"
-	Messages   int            `json:"messages"`
-	Done       bool           `json:"done"` // enough gathered to qualify & book
-	AskNext    string         `json:"askNext"` // next question if not done
+	Segment     domain.Segment `json:"segment"`
+	Treatment   string         `json:"treatment"`
+	Urgency     float64        `json:"urgency"`   // 0..1
+	IntentScore float64        `json:"intent"`    // 0..1, how serious/ready
+	BudgetTRY   float64        `json:"budgetTry"` // currency-normalised; 0 if unknown
+	Locale      string         `json:"locale"`    // "tr" | "en"
+	Messages    int            `json:"messages"`
+	Done        bool           `json:"done"`    // enough gathered to qualify & book
+	AskNext     string         `json:"askNext"` // next question if not done
 }
 
 // ReplyContext is what the LLM gets to phrase a patient-facing reply around the
 // brain's decision. The slot/booking facts are AUTHORITATIVE — supplied by the
 // brain, not the model.
 type ReplyContext struct {
-	Booked       bool
+	Booked        bool
 	AlreadyBooked bool // session already has a booking; this is a follow-up turn
-	ApptTime     time.Time
-	Locale       string
-	Reason       string // engine decision reason (for non-booked paths)
+	ApptTime      time.Time
+	Locale        string
+	Reason        string // engine decision reason (for non-booked paths)
 }
 
 // LLM abstracts a tool-use / structured-output model (Claude/Gemini in

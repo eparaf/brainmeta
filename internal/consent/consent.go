@@ -10,7 +10,7 @@ import (
 )
 
 type Store struct {
-	mu      sync.RWMutex
+	mu       sync.RWMutex
 	optedOut map[string]bool
 }
 
