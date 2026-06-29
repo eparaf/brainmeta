@@ -1,13 +1,13 @@
-# Dişçi Brain — local/production-shaped compose.
+# BrainMeta — full LOCAL stack (no external creds / HTTPS needed).
 #
-#   docker compose up --build        # start the brain on :8080
-#   curl -s localhost:8080/healthz
-#   curl -s -XPOST localhost:8080/v1/whatsapp \
-#        -d '{"phone":"+90555","clinicId":"umraniye","armId":"umraniye:meta:implant",
-#             "message":"implant istiyorum bütçem 60000 TL ağrım var","hourOfDay":14}'
+#   cp brain.env.example brain.env   # put your GEMINI_API_KEY here (or leave empty = mock)
+#   docker compose up --build
+#   open http://localhost:8080        # embedded console
 #
-# The brain-data volume holds the learned-state snapshot, so posteriors survive
-# `docker compose down && up` — the moat is durable, not in-process-only.
+# Brings up: brain (built with pgx+redis tags) + Postgres + Redis. Schema is
+# auto-applied on first connect. Learned-state snapshot persists on a volume.
+# Live Meta/WhatsApp stay off until you add their creds to brain.env + a public
+# HTTPS webhook (e.g. `ngrok http 8080`) — everything else runs locally.
 
 services:
   brain:
@@ -15,27 +15,44 @@ services:
     image: disci/brain:latest
     ports:
       - "8080:8080"
+    env_file:
+      - brain.env                       # GEMINI_API_KEY etc. (gitignored)
     environment:
-      # Set ANTHROPIC_API_KEY to use the real Claude agent; unset → mock LLM.
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - BRAIN_AGENT_MODEL=${BRAIN_AGENT_MODEL:-claude-sonnet-4-6}
+      - DATABASE_URL=postgres://brain:brain@db:5432/brain?sslmode=disable
+      - REDIS_URL=redis://redis:6379/0
       - BRAIN_SNAPSHOT=/data/brain-snapshot.json
+      - BRAIN_ADDR=:8080
     volumes:
       - brain-data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
-  # NEXT STEP (entity store): a Postgres for clinics/leads/appointments. The
-  # brain runs without it today (file-snapshot persistence on the volume above);
-  # uncomment when wiring the Postgres-backed store.Store implementation.
-  #
-  # db:
-  #   image: postgres:16-alpine
-  #   environment:
-  #     - POSTGRES_PASSWORD=brain
-  #     - POSTGRES_DB=brain
-  #   volumes:
-  #     - pg-data:/var/lib/postgresql/data
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=brain
+      - POSTGRES_PASSWORD=brain
+      - POSTGRES_DB=brain
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brain"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   brain-data:
-  # pg-data:
+  pg-data:

@@ -33,5 +33,11 @@ tidy:
 docker:
 	docker build -t disci/brain:$(VERSION) .
 
+up:           ## full local stack (brain + postgres + redis)
+	docker compose up --build
+
+down:
+	docker compose down
+
 clean:
 	rm -rf bin brain-data

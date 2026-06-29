@@ -8,13 +8,34 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// Lightweight in-process counters exposed at /metrics (Prometheus text). For a
+// full setup add a Prometheus client + histograms; this gives request volume,
+// error rates, and latency sum with zero dependencies.
+var (
+	mReqTotal atomic.Int64
+	mReq4xx   atomic.Int64
+	mReq5xx   atomic.Int64
+	mDurMsSum atomic.Int64
+)
+
+// WritePrometheus renders the counters in Prometheus exposition format.
+func WritePrometheus(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	fmt.Fprintf(w, "# TYPE brain_http_requests_total counter\nbrain_http_requests_total %d\n", mReqTotal.Load())
+	fmt.Fprintf(w, "# TYPE brain_http_4xx_total counter\nbrain_http_4xx_total %d\n", mReq4xx.Load())
+	fmt.Fprintf(w, "# TYPE brain_http_5xx_total counter\nbrain_http_5xx_total %d\n", mReq5xx.Load())
+	fmt.Fprintf(w, "# TYPE brain_http_duration_ms_sum counter\nbrain_http_duration_ms_sum %d\n", mDurMsSum.Load())
+}
 
 type ctxKey int
 
@@ -90,9 +111,18 @@ func Logger(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
+		dur := time.Since(start).Milliseconds()
+		mReqTotal.Add(1)
+		mDurMsSum.Add(dur)
+		switch {
+		case rec.status >= 500:
+			mReq5xx.Add(1)
+		case rec.status >= 400:
+			mReq4xx.Add(1)
+		}
 		slog.Info("http",
 			"method", r.Method, "path", r.URL.Path, "status", rec.status,
-			"bytes", rec.bytes, "dur_ms", time.Since(start).Milliseconds(),
+			"bytes", rec.bytes, "dur_ms", dur,
 			"ip", clientIP(r), "reqId", ReqID(r.Context()))
 	})
 }

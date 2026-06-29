@@ -14,6 +14,7 @@ import (
 	"disci/brain/internal/consent"
 	"disci/brain/internal/domain"
 	"disci/brain/internal/engine"
+	"disci/brain/internal/httpx"
 	"disci/brain/internal/session"
 	"disci/brain/internal/whatsapp"
 )
@@ -93,6 +94,9 @@ func (s *Server) Routes() *http.ServeMux {
 	})
 	mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"version": Version})
+	})
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		httpx.WritePrometheus(w)
 	})
 	// Embedded console (catch-all GET). More specific routes above win, so this
 	// only serves the UI page itself.

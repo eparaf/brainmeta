@@ -2,12 +2,16 @@ package store
 
 import (
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"log"
 	"time"
 
 	"disci/brain/internal/domain"
 )
+
+//go:embed schema.sql
+var schemaSQL string
 
 // StorePG is a Postgres-backed store.Store. It uses the stdlib database/sql, so
 // this file compiles with NO third-party dependency; to actually connect, add a
@@ -27,10 +31,23 @@ func NewPostgres(driver, dsn string) (*StorePG, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(time.Hour)
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	return &StorePG{db: db}, nil
+	s := &StorePG{db: db}
+	if err := s.Migrate(); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// Migrate applies the embedded schema (idempotent: CREATE TABLE IF NOT EXISTS),
+// so a fresh database is ready with no manual psql step.
+func (s *StorePG) Migrate() error {
+	_, err := s.db.Exec(schemaSQL)
+	return err
 }
 
 func (s *StorePG) UpsertClinic(c domain.Clinic) {
