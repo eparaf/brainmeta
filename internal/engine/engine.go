@@ -393,6 +393,35 @@ func (e *Engine) Appointments(clinicID string) []domain.Appointment {
 	return e.store.AppointmentsForClinic(clinicID)
 }
 
+// Clinic returns a clinic by id.
+func (e *Engine) Clinic(id string) (domain.Clinic, bool) { return e.store.GetClinic(id) }
+
+// NextSlots previews the next n bookable appointment times for a clinic WITHOUT
+// reserving them — so the agent (text or voice) can offer concrete options to the
+// patient. Read-only; the actual hold happens in HandleLead/reserveSlot.
+func (e *Engine) NextSlots(clinicID string, n int, now time.Time) []time.Time {
+	c, ok := e.store.GetClinic(clinicID)
+	cap := 1
+	if ok && c.DailyCapacity > 0 {
+		cap = c.DailyCapacity
+	}
+	e.bookMu.Lock()
+	defer e.bookMu.Unlock()
+	e.pruneLocked(now)
+	out := make([]time.Time, 0, n)
+	for off := 1; off <= bookingHorizonDays && len(out) < n; off++ {
+		day := now.Truncate(24*time.Hour).AddDate(0, 0, off)
+		if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+			continue
+		}
+		used := len(e.dayShows[dayBucketKey(clinicID, day.Format("2006-01-02"))])
+		for slot := used; slot < cap && len(out) < n; slot++ {
+			out = append(out, day.Add(9*time.Hour+time.Duration(slot*30)*time.Minute))
+		}
+	}
+	return out
+}
+
 // recordApptFeatures stores the booking-time no-show features for a lead.
 func (e *Engine) recordApptFeatures(leadID string, a noshow.Appt) {
 	e.featMu.Lock()

@@ -17,7 +17,11 @@ Reklam → WhatsApp AI ajanı → niteleme → beyin karar → randevu → hatı
 - **internal/noshow** — Motor 4: gösterim tahmini + EXACT Poisson-binom overbooking.
 - **internal/sla** — garanti kontrolcüsü: chance-constraint, gölge fiyat λ (booking gate + routing'i besler).
 - **internal/engine** — orkestratör (HandleLead, PlanBudget). Tüm motorları + feedback'i bağlar.
-- **internal/agent** — WhatsApp AI ajanı. LLM arayüzü: mock / Gemini / Claude.
+- **internal/agent** — WhatsApp AI ajanı + **tools.go = agent'ın eylem yüzeyi** (beyin
+  tool'ları: get_availability/book_appointment/escalate; LLM bunlarla eyleme geçer).
+- **internal/voice** — sesli çağrı kanalı (Telephony/ToolLLM/Speaker arayüzleri + tool-loop;
+  Gemini Live/OpenAI Realtime + Twilio/LiveKit production'da takılır; mock'la test edilir).
+  Booking-durumu konuşması burada da DETERMİNİSTİK.
 - **internal/feedback** — flywheel: her sonucu tüm modellere yayar.
 - **internal/persist** — öğrenilen state snapshot'ı (restart'ta moat uçmaz).
 - **internal/store** — store.Store arayüzü; Memory (default) + Postgres (StorePG, -tags pgx).
