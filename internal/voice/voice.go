@@ -97,7 +97,9 @@ func (a *Agent) Turn(ctx context.Context, sess *Session, callerText string) (str
 	if spoken == "" {
 		spoken = "Size nasıl yardımcı olabilirim?"
 	}
-	_ = a.Speaker.Say(ctx, spoken)
+	if a.Speaker != nil { // telephony renders speech via TwiML; Speaker optional
+		_ = a.Speaker.Say(ctx, spoken)
+	}
 	sess.add("agent", spoken)
 	return spoken, nil
 }

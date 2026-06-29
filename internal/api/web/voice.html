@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BrainMeta — Sesli Randevu (bedava, tarayıcı)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{font-family:'Google Sans',Inter,system-ui,sans-serif}</style>
+</head>
+<body class="min-h-screen bg-[#fafafa] text-zinc-900">
+<div class="max-w-lg mx-auto px-5 py-8">
+  <div class="flex items-center gap-3 mb-1">
+    <div class="h-8 w-8 rounded-md bg-zinc-900 text-white grid place-items-center text-sm">B</div>
+    <div class="text-lg font-semibold tracking-tight">Sesli Randevu</div>
+  </div>
+  <p class="text-[13px] text-zinc-500 mb-5">Tarayıcının kendi Türkçe ses tanıma + sesi ile çalışır — telefon/creds gerekmez, ücretsiz. Konuş, ajan niteler, beyin randevu verir.</p>
+
+  <div class="flex items-center gap-3 mb-4">
+    <select id="clinic" class="bg-white border border-zinc-300 rounded-md px-3 py-2 text-sm">
+      <option value="umraniye|implant">Ümraniye İmplant</option>
+      <option value="nisantasi|aesthetic">Nişantaşı Estetik</option>
+      <option value="kadikoy|ortho">Kadıköy Diş</option>
+      <option value="sisli|general">Şişli Aile Diş</option>
+    </select>
+    <span id="status" class="text-[12px] text-zinc-400">hazır</span>
+  </div>
+
+  <div id="log" class="bg-white border border-zinc-200 rounded-xl p-4 h-80 overflow-y-auto space-y-2 mb-4"></div>
+
+  <div class="flex items-center gap-3">
+    <button id="mic" class="h-14 w-14 rounded-full bg-zinc-900 text-white grid place-items-center text-2xl active:scale-95 transition">🎙️</button>
+    <div class="text-[13px] text-zinc-500">Mikrofona bas, konuş, bırak. (Chrome/Edge önerilir.)</div>
+  </div>
+  <p id="warn" class="text-[12px] text-amber-600 mt-3 hidden">Tarayıcın ses tanımayı desteklemiyor — Chrome/Edge dene.</p>
+</div>
+
+<script>
+const phone = '+90555' + Math.floor(1000 + Math.random()*8999)
+const logEl = document.getElementById('log'), statusEl = document.getElementById('status')
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+if (!SR) document.getElementById('warn').classList.remove('hidden')
+
+function bubble(role, text){
+  const wrap = document.createElement('div')
+  wrap.className = 'flex ' + (role==='patient'?'justify-end':'justify-start')
+  wrap.innerHTML = `<div class="max-w-[80%] px-3.5 py-2 text-[14px] rounded-2xl ${role==='patient'?'bg-zinc-900 text-white':'bg-zinc-100 text-zinc-800 border border-zinc-200'}">${text}</div>`
+  logEl.appendChild(wrap); logEl.scrollTop = logEl.scrollHeight
+}
+function speak(text){
+  try { const u = new SpeechSynthesisUtterance(text); u.lang='tr-TR'; speechSynthesis.speak(u) } catch(e){}
+}
+async function send(text){
+  bubble('patient', text)
+  const [clinicId, seg] = document.getElementById('clinic').value.split('|')
+  try {
+    const r = await fetch('/v1/whatsapp', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({phone, clinicId, armId:`${clinicId}:meta:${seg}`, message:text, hourOfDay:14})})
+    const d = await r.json()
+    bubble('agent', d.reply); speak(d.reply)
+    statusEl.textContent = d.booked ? '✓ randevu: '+new Date(d.apptTime).toLocaleString('tr-TR') : 'hazır'
+  } catch(e){ bubble('agent','Bağlantı hatası — backend çalışıyor mu?') }
+}
+
+let listening = false
+const mic = document.getElementById('mic')
+mic.onclick = () => {
+  if (!SR) return
+  const rec = new SR(); rec.lang='tr-TR'; rec.interimResults=false; rec.maxAlternatives=1
+  listening = true; statusEl.textContent='dinliyorum…'; mic.classList.add('animate-pulse')
+  rec.onresult = (e)=>{ const t = e.results[0][0].transcript; send(t) }
+  rec.onerror = ()=>{ statusEl.textContent='ses alınamadı' }
+  rec.onend = ()=>{ listening=false; mic.classList.remove('animate-pulse'); if(statusEl.textContent==='dinliyorum…') statusEl.textContent='hazır' }
+  rec.start()
+}
+</script>
+</body>
+</html>

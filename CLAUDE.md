@@ -19,9 +19,12 @@ Reklam → WhatsApp AI ajanı → niteleme → beyin karar → randevu → hatı
 - **internal/engine** — orkestratör (HandleLead, PlanBudget). Tüm motorları + feedback'i bağlar.
 - **internal/agent** — WhatsApp AI ajanı + **tools.go = agent'ın eylem yüzeyi** (beyin
   tool'ları: get_availability/book_appointment/escalate; LLM bunlarla eyleme geçer).
-- **internal/voice** — sesli çağrı kanalı (Telephony/ToolLLM/Speaker arayüzleri + tool-loop;
-  Gemini Live/OpenAI Realtime + Twilio/LiveKit production'da takılır; mock'la test edilir).
-  Booking-durumu konuşması burada da DETERMİNİSTİK.
+- **internal/voice** — sesli çağrı kanalı. İKİ yol:
+  (1) **BEDAVA**: tarayıcı Web Speech API (Türkçe STT+TTS) → `/voice` sayfası → `/v1/whatsapp`
+      (mevcut ajan). Telefoni/creds/maliyet YOK. Her zaman açık.
+  (2) **ÜCRETLİ (PSTN)**: Twilio Voice + TwiML (`twilio.go`) — turn-based; `VOICE_PUBLIC_URL`
+      + Twilio numara/creds ile açılır. Tool-loop, booking-durumu konuşması DETERMİNİSTİK.
+  Gerçek-zamanlı (Gemini Live/OpenAI Realtime + media streaming) premium UX için sonraki yükseltme.
 - **internal/feedback** — flywheel: her sonucu tüm modellere yayar.
 - **internal/persist** — öğrenilen state snapshot'ı (restart'ta moat uçmaz).
 - **internal/store** — store.Store arayüzü; Memory (default) + Postgres (StorePG, -tags pgx).

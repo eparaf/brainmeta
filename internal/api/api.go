@@ -16,6 +16,7 @@ import (
 	"disci/brain/internal/engine"
 	"disci/brain/internal/httpx"
 	"disci/brain/internal/session"
+	"disci/brain/internal/voice"
 	"disci/brain/internal/whatsapp"
 )
 
@@ -25,6 +26,13 @@ import (
 //go:embed web/index.html
 var indexHTML []byte
 
+// voiceHTML is the FREE browser voice agent (Web Speech API: Turkish STT+TTS in
+// the browser → /v1/whatsapp → reply spoken back). No telephony, no creds, no
+// cost. Served at /voice. (Paid PSTN calls use internal/voice + Twilio.)
+//
+//go:embed web/voice.html
+var voiceHTML []byte
+
 // Version is the build version, set via -ldflags "-X disci/brain/internal/api.Version=...".
 var Version = "dev"
 
@@ -33,9 +41,10 @@ type Server struct {
 	eng   *engine.Engine
 	agent *agent.Agent
 
-	cloud     *whatsapp.Cloud // live WhatsApp Cloud API (nil → webhook send is skipped)
-	consent   *consent.Store  // KVKK opt-out guard
-	appSecret string          // Meta app secret for webhook signature verification
+	cloud     *whatsapp.Cloud      // live WhatsApp Cloud API (nil → webhook send is skipped)
+	consent   *consent.Store       // KVKK opt-out guard
+	appSecret string               // Meta app secret for webhook signature verification
+	voice     *voice.TwilioHandler // paid PSTN voice (nil → /webhooks/voice off)
 
 	sessions session.Store // conversation state (swap Memory→Redis for HA)
 }
@@ -52,6 +61,9 @@ func (s *Server) SetSessionStore(store session.Store) {
 		s.sessions = store
 	}
 }
+
+// SetVoice wires the (paid) Twilio voice handler; enables /webhooks/voice.
+func (s *Server) SetVoice(h *voice.TwilioHandler) { s.voice = h }
 
 // SetIntegrations wires the live WhatsApp client, consent store, and Meta app
 // secret (for webhook signature verification). Call before serving.
@@ -71,6 +83,21 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /webhooks/whatsapp", s.handleWAInbound)   // inbound WhatsApp → agent
 	mux.HandleFunc("POST /webhooks/webform", s.handleWebform)      // website form lead → agent
 	mux.HandleFunc("POST /webhooks/meta-leads", s.handleMetaLeads) // Meta Lead Ads → agent
+	// Paid PSTN voice (Twilio) — only when configured.
+	mux.HandleFunc("POST /webhooks/voice", func(w http.ResponseWriter, r *http.Request) {
+		if s.voice == nil {
+			w.WriteHeader(503)
+			return
+		}
+		s.voice.Incoming(w, r)
+	})
+	mux.HandleFunc("POST /webhooks/voice/gather", func(w http.ResponseWriter, r *http.Request) {
+		if s.voice == nil {
+			w.WriteHeader(503)
+			return
+		}
+		s.voice.Gather(w, r)
+	})
 
 	mux.HandleFunc("POST /v1/whatsapp", s.handleWhatsApp)  // test console free-text → agent → brain
 	mux.HandleFunc("POST /v1/intake", s.handleIntake)      // structured survey answers → brain (deterministic)
@@ -100,6 +127,11 @@ func (s *Server) Routes() *http.ServeMux {
 	})
 	// Embedded console (catch-all GET). More specific routes above win, so this
 	// only serves the UI page itself.
+	// FREE browser voice agent (Web Speech API) — no telephony/creds/cost.
+	mux.HandleFunc("GET /voice", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(voiceHTML)
+	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(indexHTML)

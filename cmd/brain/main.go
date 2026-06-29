@@ -35,6 +35,7 @@ import (
 	"disci/brain/internal/session"
 	"disci/brain/internal/sim"
 	"disci/brain/internal/store"
+	"disci/brain/internal/voice"
 	"disci/brain/internal/whatsapp"
 )
 
@@ -218,6 +219,16 @@ func runServe() {
 		log.Println("whatsapp: not configured (set WHATSAPP_TOKEN + WHATSAPP_PHONE_NUMBER_ID)")
 	}
 	server.SetIntegrations(cloud, cons, os.Getenv("META_APP_SECRET"))
+
+	// FREE browser voice agent is always on at /voice (Web Speech API, no creds).
+	// PAID PSTN voice (Twilio) turns on when a public callback URL is set.
+	if base := os.Getenv("VOICE_PUBLIC_URL"); base != "" {
+		vAgent := &voice.Agent{Tools: agent.NewBrainTools(eng), LLM: voice.MockLLM{}}
+		server.SetVoice(voice.NewTwilioHandler(vAgent, base, nil))
+		log.Println("voice: Twilio PSTN webhooks enabled (paid) at /webhooks/voice")
+	} else {
+		log.Println("voice: free browser agent at /voice (set VOICE_PUBLIC_URL for paid PSTN calls)")
+	}
 
 	// Scheduled no-show reminders: 24h/2h approved-template nudges (needs live
 	// WhatsApp to actually send).
