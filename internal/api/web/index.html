@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dişçi Brain — Konsol</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { theme: { extend: { colors: {
+  ink:'#0b1220', panel:'#121a2b', line:'#1f2b45', brand:'#37d2a6', brand2:'#5b8cff' } } } }
+</script>
+<style>
+  body{background:radial-gradient(1200px 600px at 70% -10%,#16243f 0%,#0b1220 55%);}
+  ::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:#25334f;border-radius:8px}
+</style>
+</head>
+<body class="text-slate-100 min-h-screen">
+<header class="border-b border-line/60 px-6 py-4 flex items-center gap-4">
+  <div class="text-2xl">🦷</div>
+  <div><div class="text-lg font-semibold">Dişçi Brain — Konsol</div>
+  <div class="text-xs text-slate-400">randevu garanti & reklam optimizasyon beyni · gömülü arayüz (Node gerekmez)</div></div>
+  <div class="ml-auto flex items-center gap-2 text-sm"><span id="dot" class="h-2.5 w-2.5 rounded-full bg-slate-500"></span>
+  <span id="hstat" class="text-slate-400">backend: …</span></div>
+</header>
+<nav class="px-6 pt-4 flex gap-2" id="tabs"></nav>
+<main class="p-6" id="main"></main>
+
+<script>
+const TABS = ['Sohbet','Garantiler','Reklam Kolları','Bütçe']
+const CLINICS = [
+  {id:'umraniye',name:'Ümraniye İmplant',segment:'implant'},
+  {id:'nisantasi',name:'Nişantaşı Estetik',segment:'aesthetic'},
+  {id:'kadikoy',name:'Kadıköy Diş',segment:'ortho'},
+  {id:'sisli',name:'Şişli Aile Diş',segment:'general'},
+]
+const money = n => Math.round(n||0).toLocaleString('tr-TR')
+const pctv = x => x==null?'—':Math.round(x*100)+'%'
+const el = (h)=>{const t=document.createElement('template');t.innerHTML=h.trim();return t.content.firstChild}
+async function jget(p){const r=await fetch(p);if(!r.ok)throw new Error(p+': '+r.status);return r.json()}
+async function jpost(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});if(!r.ok)throw new Error(p+': '+r.status);return r.json()}
+
+// health
+jget('/healthz').then(h=>{document.getElementById('dot').className='h-2.5 w-2.5 rounded-full bg-brand';document.getElementById('hstat').textContent='backend: ok'+(h&&h.agent?' · '+h.agent:'')})
+  .catch(()=>{document.getElementById('dot').className='h-2.5 w-2.5 rounded-full bg-red-500';document.getElementById('hstat').textContent='backend: down'})
+
+let tab='Sohbet'
+const tabsEl=document.getElementById('tabs'), mainEl=document.getElementById('main')
+function renderTabs(){tabsEl.innerHTML='';TABS.forEach(t=>{const b=el(`<button class="px-4 py-2 rounded-xl text-sm font-medium ${t===tab?'bg-brand text-ink':'bg-panel text-slate-300 hover:bg-line'}">${t}</button>`);b.onclick=()=>{tab=t;render()};tabsEl.appendChild(b)})}
+function card(inner,cls=''){return `<div class="bg-panel border border-line/70 rounded-2xl p-5 ${cls}">${inner}</div>`}
+function bar(v,max,color='bg-brand'){const p=Math.max(0,Math.min(100,(v/(max||1))*100));return `<div class="h-2 rounded-full bg-line/70 overflow-hidden"><div class="h-full ${color}" style="width:${p}%"></div></div>`}
+
+function render(){renderTabs();if(tab==='Sohbet')chat();else if(tab==='Garantiler')guarantees();else if(tab==='Reklam Kolları')arms();else budget()}
+
+// ---- Sohbet ----
+let sess={turns:[],last:null,clinic:CLINICS[0],phone:'+90555'+Math.floor(1000+Math.random()*8999)}
+function chat(){
+  const arm=`${sess.clinic.id}:meta:${sess.clinic.segment}`
+  mainEl.innerHTML=`<div class="grid md:grid-cols-3 gap-5">
+   <div class="md:col-span-2 bg-panel border border-line/70 rounded-2xl p-5 flex flex-col" style="height:70vh">
+     <div class="flex items-center gap-3 mb-3">
+       <select id="cl" class="bg-ink border border-line rounded-lg px-3 py-2 text-sm">${CLINICS.map(c=>`<option value="${c.id}" ${c.id===sess.clinic.id?'selected':''}>${c.name}</option>`).join('')}</select>
+       <span class="text-xs text-slate-500">arm: ${arm} · ${sess.phone}</span>
+       <button id="rst" class="ml-auto text-xs text-slate-400 hover:text-slate-200">sıfırla</button>
+     </div>
+     <div id="log" class="flex-1 overflow-y-auto space-y-2 pr-1"></div>
+     <div class="mt-3 flex gap-2">
+       <input id="inp" class="flex-1 bg-ink border border-line rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand" placeholder="Mesaj yaz…" value="Merhaba, implant yaptırmak istiyorum, ağrım var bütçem 60000 TL"/>
+       <button id="snd" class="px-5 rounded-xl bg-brand text-ink font-semibold">Gönder</button>
+     </div>
+   </div>
+   <div class="bg-panel border border-line/70 rounded-2xl p-5"><div class="text-sm font-semibold mb-3">Beynin kararı</div><div id="dec" class="text-sm text-slate-500">Henüz karar yok.</div>
+   <div class="mt-5 text-xs text-slate-500 leading-relaxed">Prensip: <b class="text-slate-300">LLM önerir, beyin karar verir.</b> Yanıttaki saat beynin slot'u.</div></div>
+  </div>`
+  const log=document.getElementById('log')
+  const draw=()=>{log.innerHTML=sess.turns.length?'':'<div class="text-slate-500 text-sm mt-10 text-center">Hasta gibi yaz; ajan niteler, beyin karar verir.</div>';
+    sess.turns.forEach(t=>log.appendChild(el(`<div class="flex ${t.role==='patient'?'justify-end':'justify-start'}"><div class="max-w-[80%] px-3.5 py-2 rounded-2xl text-sm ${t.role==='patient'?'bg-brand2 text-white rounded-br-sm':'bg-line text-slate-100 rounded-bl-sm'}">${t.role==='agent'?'🤖 ':''}${t.text}</div></div>`)));log.scrollTop=log.scrollHeight}
+  const drawDec=()=>{const d=document.getElementById('dec');if(!sess.last){d.innerHTML='Henüz karar yok.';return}const l=sess.last,q=l.qualification||{}
+    d.innerHTML=`<div class="space-y-3"><div class="inline-flex items-center gap-2 px-3 py-1 rounded-lg ${l.booked?'bg-brand/20 text-brand':'bg-amber-500/20 text-amber-300'}">${l.booked?'✓ Randevu oluşturuldu':'• '+l.reason}</div>
+    ${l.booked?row('Randevu',new Date(l.apptTime).toLocaleString('tr-TR')):''}
+    <div class="border-t border-line/60 pt-3 text-slate-400 text-xs uppercase">Niteleme</div>
+    ${row('Segment',q.segment)}${row('Niyet',pctv(q.intent))}${row('Aciliyet',pctv(q.urgency))}${row('Bütçe',q.budgetTry?money(q.budgetTry)+' ₺':'—')}${row('Dil',q.locale)}</div>`}
+  draw();drawDec()
+  const fresh=()=>{sess.turns=[];sess.last=null;sess.phone='+90555'+Math.floor(1000+Math.random()*8999)}
+  document.getElementById('cl').onchange=e=>{sess.clinic=CLINICS.find(c=>c.id===e.target.value);fresh();chat()}
+  document.getElementById('rst').onclick=()=>{fresh();chat()}
+  const send=async()=>{const inp=document.getElementById('inp');const m=inp.value.trim();if(!m)return;sess.turns.push({role:'patient',text:m});inp.value='';draw()
+    try{const res=await jpost('/v1/whatsapp',{phone:sess.phone,clinicId:sess.clinic.id,armId:arm,message:m,hourOfDay:14,distanceKm:6});sess.turns.push({role:'agent',text:res.reply});sess.last=res}
+    catch(e){sess.turns.push({role:'agent',text:'Hata: '+e.message+' (backend?)'})}
+    draw();drawDec()}
+  document.getElementById('snd').onclick=send
+  document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')send()})
+}
+function row(k,v){return `<div class="flex justify-between"><span class="text-slate-400">${k}</span><span class="font-medium">${v??'—'}</span></div>`}
+
+// ---- Garantiler ----
+async function guarantees(){mainEl.innerHTML=toolbar()+'<div id="g" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4"></div>';wire()
+  try{const rows=await jget('/v1/sla');const g=document.getElementById('g');g.innerHTML=''
+    rows.forEach(r=>{const ratio=r.Guaranteed?r.Delivered/r.Guaranteed:0;const name=(CLINICS.find(c=>c.id===r.ClinicID)||{}).name||r.ClinicID
+      g.appendChild(el(card(`<div class="flex items-center justify-between mb-1"><div class="font-semibold">${name}</div>
+      <span class="text-xs px-2 py-0.5 rounded ${r.OnTrack?'bg-brand/20 text-brand':'bg-amber-500/20 text-amber-300'}">${r.OnTrack?'yolunda':'geride'}</span></div>
+      <div class="text-3xl font-bold">${r.Delivered}<span class="text-slate-500 text-lg"> / ${r.Guaranteed}</span></div>
+      <div class="text-xs text-slate-400 mb-2">nitelikli randevu (bu ay)</div>${bar(ratio,1,ratio>=1?'bg-brand':'bg-brand2')}
+      <div class="flex justify-between mt-3 text-sm"><span class="text-slate-400">gölge fiyat λ</span><span class="font-medium">${(r.ShadowPrice||1).toFixed(2)}×</span></div>`)))})
+  }catch(e){err(e)}
+}
+// ---- Reklam Kolları ----
+async function arms(){mainEl.innerHTML=toolbar()+'<div id="a"></div>';wire()
+  try{const rows=await jget('/v1/arms');const max=Math.max(0.01,...rows.map(r=>r.thetaHat||0))
+    document.getElementById('a').innerHTML=card(`<table class="w-full text-sm"><thead class="text-slate-400 text-left text-xs uppercase"><tr><th class="py-2">Kol</th><th>Segment</th><th class="w-40">θ̂</th><th>CPL</th><th>Lead</th><th>Randevu</th><th>Harcama</th></tr></thead><tbody>${rows.map(r=>`<tr class="border-t border-line/50"><td class="py-2 font-mono text-xs">${r.armId}</td><td class="text-slate-300">${r.segment}</td><td><div class="flex items-center gap-2"><div class="flex-1">${bar(r.thetaHat,max)}</div><span class="w-12 text-right">${(r.thetaHat||0).toFixed(3)}</span></div></td><td>${money(r.cpl)}</td><td>${r.leads}</td><td>${r.appts}</td><td>${money(r.spend)}</td></tr>`).join('')}</tbody></table><div class="text-xs text-slate-500 mt-3">θ̂ = beynin öğrendiği "kaliteli lead getirme" olasılığı (Thompson sampling).</div>`)
+  }catch(e){err(e)}
+}
+// ---- Bütçe ----
+async function budget(){mainEl.innerHTML=toolbar()+'<div id="b"></div>';wire()
+  try{const d=await jpost('/v1/budget/plan',{daysInMonth:30});const al=(d.allocations||[]).filter(a=>a.DailyBudget>0).sort((a,b)=>b.DailyBudget-a.DailyBudget);const max=Math.max(1,...al.map(a=>a.DailyBudget))
+    document.getElementById('b').innerHTML=`<div class="grid md:grid-cols-3 gap-4 mb-4">${card(`<div class="text-slate-400 text-xs">Ağ günlük bütçe</div><div class="text-2xl font-bold">${money(d.networkDaily)} ₺</div>`)}${card(`<div class="text-slate-400 text-xs">Gölge fiyat λ</div><div class="text-2xl font-bold">${(d.lambda||0).toFixed(3)}</div>`)}${card(`<div class="text-slate-400 text-xs">Fonlanan kol</div><div class="text-2xl font-bold">${al.length}</div>`)}</div>`+
+    card(`<div class="space-y-2">${al.map(a=>`<div class="flex items-center gap-3 text-sm"><div class="w-56 font-mono text-xs truncate">${a.ArmID}</div><div class="flex-1">${bar(a.DailyBudget,max,'bg-brand2')}</div><div class="w-24 text-right">${money(a.DailyBudget)} ₺</div></div>`).join('')}</div><div class="text-xs text-slate-500 mt-3">Her klinik kendi bütçesini kendi platformlarına böler.</div>`)
+  }catch(e){err(e)}
+}
+function toolbar(){return '<div class="flex items-center gap-3 mb-4"><button id="rf" class="px-3 py-1.5 rounded-lg bg-panel border border-line text-sm hover:bg-line">↻ Yenile</button><span id="er" class="text-red-400 text-sm"></span></div>'}
+function wire(){const b=document.getElementById('rf');if(b)b.onclick=render}
+function err(e){const x=document.getElementById('er');if(x)x.textContent='Hata: '+e.message+' — backend çalışıyor mu?'}
+
+render()
+</script>
+</body>
+</html>

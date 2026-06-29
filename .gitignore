@@ -1,0 +1,9 @@
+brain.env
+.github-token
+brain-data/
+/brain
+/brain.exe
+*.log
+ui/node_modules
+ui/dist
+ui/.vite

@@ -1,0 +1,7 @@
+.git
+*.md
+docs/
+*_test.go
+/data
+*.log
+.DS_Store

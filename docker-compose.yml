@@ -1,0 +1,41 @@
+# Dişçi Brain — local/production-shaped compose.
+#
+#   docker compose up --build        # start the brain on :8080
+#   curl -s localhost:8080/healthz
+#   curl -s -XPOST localhost:8080/v1/whatsapp \
+#        -d '{"phone":"+90555","clinicId":"umraniye","armId":"umraniye:meta:implant",
+#             "message":"implant istiyorum bütçem 60000 TL ağrım var","hourOfDay":14}'
+#
+# The brain-data volume holds the learned-state snapshot, so posteriors survive
+# `docker compose down && up` — the moat is durable, not in-process-only.
+
+services:
+  brain:
+    build: .
+    image: disci/brain:latest
+    ports:
+      - "8080:8080"
+    environment:
+      # Set ANTHROPIC_API_KEY to use the real Claude agent; unset → mock LLM.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - BRAIN_AGENT_MODEL=${BRAIN_AGENT_MODEL:-claude-sonnet-4-6}
+      - BRAIN_SNAPSHOT=/data/brain-snapshot.json
+    volumes:
+      - brain-data:/data
+    restart: unless-stopped
+
+  # NEXT STEP (entity store): a Postgres for clinics/leads/appointments. The
+  # brain runs without it today (file-snapshot persistence on the volume above);
+  # uncomment when wiring the Postgres-backed store.Store implementation.
+  #
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     - POSTGRES_PASSWORD=brain
+  #     - POSTGRES_DB=brain
+  #   volumes:
+  #     - pg-data:/var/lib/postgresql/data
+
+volumes:
+  brain-data:
+  # pg-data:
