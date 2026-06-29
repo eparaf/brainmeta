@@ -15,15 +15,17 @@
   </div>
   <p class="text-[13px] text-zinc-500 mb-5">Tarayıcının kendi Türkçe ses tanıma + sesi ile çalışır — telefon/creds gerekmez, ücretsiz. Konuş, ajan niteler, beyin randevu verir.</p>
 
-  <div class="flex items-center gap-3 mb-4">
+  <div class="flex flex-wrap items-center gap-3 mb-3">
     <select id="clinic" class="bg-white border border-zinc-300 rounded-md px-3 py-2 text-sm">
       <option value="umraniye|implant">Ümraniye İmplant</option>
       <option value="nisantasi|aesthetic">Nişantaşı Estetik</option>
       <option value="kadikoy|ortho">Kadıköy Diş</option>
       <option value="sisli|general">Şişli Aile Diş</option>
     </select>
+    <select id="voice" class="bg-white border border-zinc-300 rounded-md px-3 py-2 text-sm max-w-[15rem]" title="Ses"></select>
     <span id="status" class="text-[12px] text-zinc-400">hazır</span>
   </div>
+  <p class="text-[12px] text-zinc-500 mb-4">💡 En doğal kadın sesi için <b>Microsoft Edge</b> kullan ve listeden <b>“Emel (Natural)”</b> sesini seç (ücretsiz nöral ses). Chrome'da seçenekler daha kısıtlı.</p>
 
   <div id="log" class="bg-white border border-zinc-200 rounded-xl p-4 h-80 overflow-y-auto space-y-2 mb-4"></div>
 
@@ -46,8 +48,37 @@ function bubble(role, text){
   wrap.innerHTML = `<div class="max-w-[80%] px-3.5 py-2 text-[14px] rounded-2xl ${role==='patient'?'bg-zinc-900 text-white':'bg-zinc-100 text-zinc-800 border border-zinc-200'}">${text}</div>`
   logEl.appendChild(wrap); logEl.scrollTop = logEl.scrollHeight
 }
+// ---- Voice selection: pick the most NATURAL Turkish female voice ----
+let voices = [], chosen = null
+const voiceSel = document.getElementById('voice')
+function scoreVoice(v){
+  const n = v.name.toLowerCase()
+  let s = 0
+  if (/(natural|online|neural)/.test(n)) s += 100   // Edge neural = en doğal
+  if (/(emel|yelda|seda|filiz|aylin)/.test(n)) s += 40 // bilinen kadın TR sesleri
+  if (/female|kadın/.test(n)) s += 20
+  if (/google/.test(n)) s += 10
+  if (/microsoft/.test(n)) s += 8
+  return s
+}
+function loadVoices(){
+  voices = speechSynthesis.getVoices().filter(v => (v.lang||'').toLowerCase().startsWith('tr'))
+  voices.sort((a,b)=>scoreVoice(b)-scoreVoice(a))
+  voiceSel.innerHTML = voices.map((v,i)=>`<option value="${i}">${v.name}</option>`).join('') || '<option>Türkçe ses yok</option>'
+  chosen = voices[0] || null
+  voiceSel.onchange = ()=>{ chosen = voices[voiceSel.value] }
+}
+speechSynthesis.onvoiceschanged = loadVoices
+loadVoices()
+
 function speak(text){
-  try { const u = new SpeechSynthesisUtterance(text); u.lang='tr-TR'; speechSynthesis.speak(u) } catch(e){}
+  try {
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = 'tr-TR'
+    if (chosen) u.voice = chosen
+    u.rate = 1.0; u.pitch = 1.0
+    speechSynthesis.cancel(); speechSynthesis.speak(u)
+  } catch(e){}
 }
 async function send(text){
   bubble('patient', text)
