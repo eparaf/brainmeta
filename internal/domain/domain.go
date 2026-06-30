@@ -152,6 +152,10 @@ type Appointment struct {
 	// Reminder bookkeeping (which approved templates have been sent).
 	Reminded24h bool
 	Reminded2h  bool
+
+	// Set when booked via the calendar widget (doctor + service chosen by patient).
+	DoctorID string
+	Service  string
 }
 
 // Outcome is a feedback event that flows back into the learning loop. Every
@@ -211,4 +215,142 @@ type Arm struct {
 	// TRY, not appointments per TRY — otherwise it would always starve premium
 	// (high-CPL, high-ticket) tourism arms in favour of cheap local leads.
 	ExpectedValuePerAppt float64
+}
+
+// Role is a dashboard user's authorization level. Admins act across every clinic;
+// clinic users are scoped to their ClinicIDs. Auth is a dashboard concern layered
+// on top of the brain — it never touches the learned posterior state.
+type Role string
+
+const (
+	RoleAdmin  Role = "admin"  // sees/acts on every clinic
+	RoleClinic Role = "clinic" // scoped to ClinicIDs
+)
+
+// User is a dashboard account for the Next.js panel. Unlike the other domain types
+// it carries json tags: it round-trips through the JSONB store AND out to the
+// panel, where field names must be camelCase. PasswordHash is persisted (do NOT
+// json:"-" it — that would drop it from JSONB storage); it is stripped at the API
+// boundary instead (see api.publicUser).
+type User struct {
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`        // unique, lowercased
+	Name         string    `json:"name"`
+	PasswordHash string    `json:"passwordHash"` // PHC string; never returned to clients
+	Role         Role      `json:"role"`
+	ClinicIDs    []string  `json:"clinicIds"` // clinic membership; ignored for RoleAdmin
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// Connection is a per-clinic integration status (WhatsApp / Meta / Google / web
+// form). The dashboard's "Bağlantılar" page reads/writes these. Detail holds only
+// a masked identifier or status string — NEVER a secret/token.
+type Connection struct {
+	ID        string    `json:"id"`       // "<clinicID>:<type>"
+	ClinicID  string    `json:"clinicId"`
+	Type      string    `json:"type"`     // whatsapp | meta_ads | google_ads | web_form
+	Connected bool      `json:"connected"`
+	Detail    string    `json:"detail"` // masked status only — no secrets
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// WidgetField is one configurable field of the embeddable web form.
+type WidgetField struct {
+	Key      string `json:"key"`   // name | phone | message | email
+	Label    string `json:"label"`
+	Required bool   `json:"required"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// WidgetConfig is a clinic's customization for the embeddable JS widgets. The form
+// and calendar are SEPARATE widgets, each independently styled. PublicKey is a
+// publishable key embedded on the clinic's site; it only allows submitting leads /
+// booking — never reading data. Doctors and services are first-class entities (see
+// Doctor / Service), not part of this config.
+type WidgetConfig struct {
+	ClinicID  string `json:"clinicId"`
+	PublicKey string `json:"publicKey"`
+
+	// Form (contact/lead) widget.
+	PrimaryColor string        `json:"primaryColor"`
+	FormTitle    string        `json:"formTitle"`
+	FormSubtitle string        `json:"formSubtitle"`
+	SuccessText  string        `json:"successText"`
+	Fields       []WidgetField `json:"fields"`
+
+	// Calendar (appointment) widget.
+	CalendarColor    string `json:"calendarColor"`
+	CalendarTitle    string `json:"calendarTitle"`
+	CalendarSubtitle string `json:"calendarSubtitle"`
+	ConfirmText      string `json:"confirmText"`
+
+	// Shared appearance/behaviour.
+	Theme     string `json:"theme"`     // "dark" | "light"
+	Recommend bool   `json:"recommend"` // show the AI "best slot" suggestion
+
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// DefaultWidgetConfig returns a sensible starting config for a clinic.
+func DefaultWidgetConfig(clinicID, publicKey string) WidgetConfig {
+	return WidgetConfig{
+		ClinicID:     clinicID,
+		PublicKey:    publicKey,
+		PrimaryColor: "#30d158",
+		FormTitle:    "Ücretsiz Muayene Randevusu",
+		FormSubtitle: "Bilgilerinizi bırakın, kliniğimiz sizi arasın.",
+		SuccessText:  "Teşekkürler! En kısa sürede sizinle iletişime geçeceğiz.",
+		Fields: []WidgetField{
+			{Key: "name", Label: "Ad Soyad", Required: true, Enabled: true},
+			{Key: "phone", Label: "Telefon", Required: true, Enabled: true},
+			{Key: "message", Label: "Mesaj / Şikayet", Required: false, Enabled: true},
+			{Key: "email", Label: "E-posta", Required: false, Enabled: false},
+		},
+		CalendarColor:    "#30d158",
+		CalendarTitle:    "Online Randevu",
+		CalendarSubtitle: "Hizmet ve hekim seçerek uygun saatte randevunuzu oluşturun.",
+		ConfirmText:      "Randevu talebiniz alındı! Kliniğimiz onay için sizinle iletişime geçecek.",
+		Theme:            "dark",
+		Recommend:        true,
+	}
+}
+
+// Doctor is a clinic's practitioner. Working days/hours + slot length drive the
+// calendar widget's availability computation.
+type Doctor struct {
+	ID        string `json:"id"`
+	ClinicID  string `json:"clinicId"`
+	Name      string `json:"name"`
+	Title     string `json:"title"`     // "Dt.", "Uzm. Dt.", "Prof. Dr." ...
+	Specialty string `json:"specialty"` // free text, e.g. "İmplantoloji"
+	Active    bool   `json:"active"`
+	Days      []int  `json:"days"`      // working weekdays, ISO 1=Mon..7=Sun
+	StartHour int    `json:"startHour"` // e.g. 9
+	EndHour   int    `json:"endHour"`   // e.g. 17
+	SlotMins  int    `json:"slotMins"`  // appointment granularity, e.g. 30
+}
+
+// Service is a treatment/examination type offered by a clinic. DoctorIDs are the
+// doctors who can perform it (drives the calendar's service → doctor step).
+type Service struct {
+	ID           string   `json:"id"`
+	ClinicID     string   `json:"clinicId"`
+	Name         string   `json:"name"`
+	DurationMins int      `json:"durationMins"`
+	DoctorIDs    []string `json:"doctorIds"`
+	Active       bool     `json:"active"`
+}
+
+// TemplateDraft is a clinic-authored WhatsApp message template awaiting Meta
+// approval. The static Meta-approved set lives in internal/whatsapp; these are the
+// drafts the dashboard can create (Status defaults to PENDING — Meta approves).
+type TemplateDraft struct {
+	ID        string    `json:"id"`
+	ClinicID  string    `json:"clinicId"`
+	Name      string    `json:"name"`
+	Category  string    `json:"category"` // UTILITY | MARKETING
+	Language  string    `json:"language"`
+	Body      string    `json:"body"`
+	Status    string    `json:"status"` // PENDING | APPROVED | REJECTED
+	CreatedAt time.Time `json:"createdAt"`
 }

@@ -8,14 +8,17 @@ import (
 	_ "embed"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"disci/brain/internal/agent"
+	"disci/brain/internal/auth"
 	"disci/brain/internal/consent"
 	"disci/brain/internal/domain"
 	"disci/brain/internal/engine"
 	"disci/brain/internal/httpx"
 	"disci/brain/internal/session"
+	"disci/brain/internal/store"
 	"disci/brain/internal/voice"
 	"disci/brain/internal/whatsapp"
 )
@@ -33,6 +36,13 @@ var indexHTML []byte
 //go:embed web/voice.html
 var voiceHTML []byte
 
+// widgetJS is the embeddable web-form + appointment-calendar widget clinics drop
+// onto their own sites. Served at /embed/widget.js; configured per clinic via the
+// public key it carries.
+//
+//go:embed web/widget.js
+var widgetJS []byte
+
 // Version is the build version, set via -ldflags "-X disci/brain/internal/api.Version=...".
 var Version = "dev"
 
@@ -47,6 +57,10 @@ type Server struct {
 	voice     *voice.TwilioHandler // paid PSTN voice (nil → /webhooks/voice off)
 
 	sessions session.Store // conversation state (swap Memory→Redis for HA)
+
+	store       store.Store         // entity store (for dashboard auth/list endpoints)
+	authn       *auth.Authenticator // JWT signer/verifier (nil → /v1/auth/* return 503)
+	corsOrigins map[string]bool     // allowlist; empty → permissive "*" (dev)
 }
 
 // New builds the HTTP server. The agent may be nil (then /v1/whatsapp is off).
@@ -75,6 +89,23 @@ func (s *Server) SetIntegrations(cloud *whatsapp.Cloud, cons *consent.Store, app
 	}
 }
 
+// SetStore wires the entity store used by the dashboard auth and list endpoints.
+func (s *Server) SetStore(st store.Store) { s.store = st }
+
+// SetAuth wires the JWT authenticator that signs/verifies dashboard tokens.
+func (s *Server) SetAuth(a *auth.Authenticator) { s.authn = a }
+
+// SetCORS sets the allowed browser origins. Empty/unset → permissive "*" (dev).
+func (s *Server) SetCORS(origins []string) {
+	m := map[string]bool{}
+	for _, o := range origins {
+		if o = strings.TrimSpace(o); o != "" {
+			m[o] = true
+		}
+	}
+	s.corsOrigins = m
+}
+
 // Routes returns the configured mux.
 func (s *Server) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
@@ -99,6 +130,14 @@ func (s *Server) Routes() *http.ServeMux {
 		s.voice.Gather(w, r)
 	})
 
+	// Dashboard auth (Next.js panel). login/register/refresh are auth-exempt (see
+	// auth.ProtectV1); me/logout require a valid token.
+	mux.HandleFunc("POST /v1/auth/register", s.handleRegister)
+	mux.HandleFunc("POST /v1/auth/login", s.handleLogin)
+	mux.HandleFunc("GET /v1/auth/me", s.handleMe)
+	mux.HandleFunc("POST /v1/auth/refresh", s.handleRefresh)
+	mux.HandleFunc("POST /v1/auth/logout", s.handleLogout)
+
 	mux.HandleFunc("POST /v1/whatsapp", s.handleWhatsApp)  // test console free-text → agent → brain
 	mux.HandleFunc("POST /v1/intake", s.handleIntake)      // structured survey answers → brain (deterministic)
 	mux.HandleFunc("POST /v1/leads", s.handleLead)         // a pre-qualified lead arrived
@@ -106,7 +145,38 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/budget/plan", s.handleBudget) // run a budget allocation cycle
 	mux.HandleFunc("GET /v1/sla", s.handleSLA)             // guarantee health
 	mux.HandleFunc("GET /v1/arms", s.handleArms)           // learned ad-arm stats
-	mux.HandleFunc("GET /v1/templates", s.handleTemplates) // Meta-approved WhatsApp templates
+	mux.HandleFunc("GET /v1/templates", s.handleTemplates) // approved templates + drafts
+
+	// Dashboard list/CRUD surface (Next.js panel pages).
+	mux.HandleFunc("GET /v1/clinics", s.handleListClinics)
+	mux.HandleFunc("GET /v1/leads", s.handleListLeads)
+	mux.HandleFunc("GET /v1/appointments", s.handleListAppointments)
+	mux.HandleFunc("GET /v1/conversations", s.handleListConversations)
+	mux.HandleFunc("GET /v1/conversations/{id}", s.handleConversation)
+	mux.HandleFunc("POST /v1/templates", s.handleCreateTemplate)
+	mux.HandleFunc("GET /v1/connections", s.handleConnections)
+	mux.HandleFunc("POST /v1/connections", s.handleConnections)
+
+	// Embeddable widget: per-clinic config (protected) + public submission surface.
+	mux.HandleFunc("GET /v1/widget", s.handleWidgetGet)
+	mux.HandleFunc("POST /v1/widget", s.handleWidgetSave)
+	mux.HandleFunc("POST /v1/widget/rotate-key", s.handleWidgetRotate)
+	// Doctors & services (clinic calendar).
+	mux.HandleFunc("GET /v1/doctors", s.handleListDoctors)
+	mux.HandleFunc("POST /v1/doctors", s.handleSaveDoctor)
+	mux.HandleFunc("DELETE /v1/doctors/{id}", s.handleDeleteDoctor)
+	mux.HandleFunc("GET /v1/services", s.handleListServices)
+	mux.HandleFunc("POST /v1/services", s.handleSaveService)
+	mux.HandleFunc("DELETE /v1/services/{id}", s.handleDeleteService)
+	// Public widget surface: form lead + step-by-step calendar booking.
+	mux.HandleFunc("GET /public/widget", s.handlePublicWidget)
+	mux.HandleFunc("POST /public/widget/lead", s.handlePublicWidgetLead)
+	mux.HandleFunc("GET /public/widget/services", s.handlePublicServices)
+	mux.HandleFunc("GET /public/widget/doctors", s.handlePublicDoctors)
+	mux.HandleFunc("GET /public/widget/availability", s.handlePublicAvailability)
+	mux.HandleFunc("GET /public/widget/recommend", s.handlePublicRecommend)
+	mux.HandleFunc("POST /public/widget/book", s.handlePublicCalendarBook)
+	mux.HandleFunc("GET /embed/widget.js", s.handleWidgetJS)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		agentName := "none"
 		if s.agent != nil {
@@ -139,18 +209,30 @@ func (s *Server) Routes() *http.ServeMux {
 	return mux
 }
 
-// Handler returns the routes wrapped with permissive CORS so the Vite/Tailwind
-// dev UI (a different origin) can call the API directly without auth. This is a
-// dev/demo convenience — lock it down before exposing publicly.
+// Handler returns the routes wrapped with CORS so the Next.js dev panel (a
+// different origin) can call the API. Origins are an allowlist (BRAIN_CORS_ORIGINS);
+// when unset it falls back to permissive "*" for local dev.
 func (s *Server) Handler() http.Handler {
-	return cors(s.Routes())
+	return s.cors(s.Routes())
 }
 
-func cors(next http.Handler) http.Handler {
+func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		origin := r.Header.Get("Origin")
+		// The embeddable widget + its public submission API are called from arbitrary
+		// clinic websites, so they are always wildcard-CORS regardless of allowlist.
+		public := strings.HasPrefix(r.URL.Path, "/public/") ||
+			strings.HasPrefix(r.URL.Path, "/embed/")
+		switch {
+		case public || len(s.corsOrigins) == 0: // public widget, or dev default
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		case s.corsOrigins[origin]:
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		// Authorization is load-bearing: the panel sends the JWT as a bearer token.
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -299,8 +381,29 @@ func (s *Server) handleArms(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.eng.Budget.Snapshot())
 }
 
+// handleTemplates returns the static Meta-approved templates merged with any
+// clinic-authored drafts the caller can see.
 func (s *Server) handleTemplates(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, whatsapp.List())
+	out := []map[string]any{}
+	for _, t := range whatsapp.List() {
+		out = append(out, map[string]any{
+			"id": t.Name + ":" + t.Language, "name": t.Name, "category": t.Category,
+			"language": t.Language, "status": t.Status, "body": t.Body, "vars": t.Vars,
+		})
+	}
+	if s.store != nil {
+		u, _ := auth.UserFrom(r.Context())
+		for _, d := range s.store.ListTemplates("") {
+			if !auth.CanAccessClinic(u, d.ClinicID) {
+				continue
+			}
+			out = append(out, map[string]any{
+				"id": d.ID, "name": d.Name, "category": d.Category, "language": d.Language,
+				"status": d.Status, "body": d.Body, "clinicId": d.ClinicID,
+			})
+		}
+	}
+	writeJSON(w, 200, out)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

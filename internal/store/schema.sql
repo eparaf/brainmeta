@@ -37,3 +37,56 @@ CREATE TABLE IF NOT EXISTS consent (
   opted_out BOOLEAN NOT NULL DEFAULT false,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Dashboard users (Next.js panel auth). The brain itself is account-agnostic;
+-- this is the login surface. Stored as jsonb like the other entities, with email
+-- lifted into its own UNIQUE column for fast, case-insensitive login lookups.
+CREATE TABLE IF NOT EXISTS users (
+  id    TEXT PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  data  JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Per-clinic integration status (dashboard "Bağlantılar"). No secrets stored.
+CREATE TABLE IF NOT EXISTS connections (
+  id         TEXT PRIMARY KEY,        -- "<clinicID>:<type>"
+  clinic_id  TEXT,
+  type       TEXT,
+  data       JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_conn_clinic ON connections(clinic_id);
+
+-- Clinic-authored WhatsApp template drafts (PENDING until Meta approves).
+CREATE TABLE IF NOT EXISTS templates (
+  id        TEXT PRIMARY KEY,
+  clinic_id TEXT,
+  status    TEXT,
+  data      JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tmpl_clinic ON templates(clinic_id);
+
+-- Embeddable widget config (web form + calendar). One per clinic; public_key is
+-- the publishable embed key looked up by the public endpoints.
+CREATE TABLE IF NOT EXISTS widgets (
+  clinic_id  TEXT PRIMARY KEY,
+  public_key TEXT UNIQUE NOT NULL,
+  data       JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_widget_key ON widgets(public_key);
+
+-- Clinic practitioners + treatment/examination types for the appointment calendar.
+CREATE TABLE IF NOT EXISTS doctors (
+  id        TEXT PRIMARY KEY,
+  clinic_id TEXT,
+  data      JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_doctor_clinic ON doctors(clinic_id);
+
+CREATE TABLE IF NOT EXISTS services (
+  id        TEXT PRIMARY KEY,
+  clinic_id TEXT,
+  data      JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_service_clinic ON services(clinic_id);

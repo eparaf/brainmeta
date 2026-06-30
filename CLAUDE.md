@@ -66,6 +66,11 @@ go run ./cmd/brain serve   # API + gömülü konsol :8080
 go test ./...              # tüm testler
 ```
 UI: `cd ui && npm install && npm run dev` (Vite+React, BACKEND_URL ile backend'e bağlanır).
+Panel: `cd nextjs-web && npm run dev` (Next.js, :3002). Takvim modülü: `/calendar` (slug İngilizce).
+
+## Geliştirme notu (AI asistan)
+- **Her düzenlemede `eslint` çalıştırma** (yavaş). Frontend için doğrulama olarak yalnızca
+  `npx tsc --noEmit` kullan; lint'i ancak iş bitiminde bir kez (veya istenirse) çalıştır.
 
 ## Build matrisi
 ```

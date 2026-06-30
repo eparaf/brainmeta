@@ -11,6 +11,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
@@ -18,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 	"disci/brain/internal/config"
 	"disci/brain/internal/consent"
 	"disci/brain/internal/datasource"
+	"disci/brain/internal/domain"
 	"disci/brain/internal/engine"
 	"disci/brain/internal/httpx"
 	"disci/brain/internal/meta"
@@ -141,6 +144,148 @@ func loadEnvFile() {
 	log.Printf("loaded %s", path)
 }
 
+// seedAdmin creates a default admin account (idempotent) so the Next.js panel can
+// log in immediately on a fresh in-memory OR Postgres store. Override the
+// credentials with BRAIN_ADMIN_EMAIL / BRAIN_ADMIN_PASSWORD.
+func seedAdmin(st store.Store, eng *engine.Engine) {
+	email := envOr("BRAIN_ADMIN_EMAIL", "admin@disci.local")
+	pass := envOr("BRAIN_ADMIN_PASSWORD", "admin1234")
+	if _, ok := st.GetUserByEmail(email); ok {
+		return // already seeded (e.g. persisted in Postgres)
+	}
+	hash, err := auth.HashPassword(pass)
+	if err != nil {
+		log.Printf("seed admin: hash failed: %v", err)
+		return
+	}
+	var ids []string
+	for _, c := range eng.Clinics() {
+		ids = append(ids, c.ID)
+	}
+	u := domain.User{
+		ID: "user-admin", Email: email, Name: "Admin",
+		PasswordHash: hash, Role: domain.RoleAdmin, ClinicIDs: ids,
+		CreatedAt: time.Now(),
+	}
+	if err := st.CreateUser(u); err != nil {
+		log.Printf("seed admin: %v", err)
+		return
+	}
+	if pass == "admin1234" {
+		log.Printf("auth: seeded admin %s with the DEFAULT password — set BRAIN_ADMIN_PASSWORD", email)
+	} else {
+		log.Printf("auth: seeded admin %s", email)
+	}
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// seedDemoLeads runs a handful of synthetic leads through the brain (only when the
+// store has no leads yet) so the panel's lead/appointment/conversation pages have
+// data to show. Booked leads also count toward the clinic's SLA. Disable with
+// BRAIN_SEED_DEMO=false.
+func seedDemoLeads(eng *engine.Engine, st store.Store) {
+	if os.Getenv("BRAIN_SEED_DEMO") == "false" {
+		return
+	}
+	if len(st.ListLeads(store.LeadFilter{})) > 0 {
+		return // already seeded / has real leads
+	}
+	clinics := eng.Clinics()
+	if len(clinics) == 0 {
+		return
+	}
+	now := time.Now()
+	names := []string{
+		"Ahmet Yılmaz", "Zeynep Kaya", "Mert Demir", "Sarah Jenkins", "Caner Özkan",
+		"Buse Yurt", "Kadir Bulut", "Elif Şahin", "Deniz Arslan", "Ümit Çelik",
+		"Fatma Koç", "John Smith", "Aylin Toprak", "Burak Aydın", "Naz Güneş", "Onur Yıldız",
+	}
+	budgets := []float64{15000, 45000, 8000, 220000, 60000, 4000}
+	booked := 0
+	for i, name := range names {
+		c := clinics[i%len(clinics)]
+		lead := domain.Lead{
+			ID:        "demo-" + strconv.Itoa(i),
+			Phone:     "+90555" + strconv.Itoa(1000000+i*54321),
+			Name:      name,
+			ClinicID:  c.ID,
+			ArmID:     fmt.Sprintf("%s:meta:%s", c.ID, c.Segment),
+			Segment:   c.Segment,
+			Platform:  domain.PlatformMeta,
+			CreatedAt: now.Add(-time.Duration(i) * time.Hour),
+			Features: domain.LeadFeatures{
+				FirstResponseSecs: 25, MessagesExchanged: 4, DistanceKm: 5, HourOfDay: 14,
+				StatedBudgetTRY: budgets[i%len(budgets)],
+				UrgencyScore:    float64((i*13)%100) / 100.0,
+				IntentScore:     0.45 + float64((i*7)%45)/100.0,
+			},
+			Status: domain.LeadNew,
+		}
+		if dec := eng.HandleLead(lead, now); dec.Booked {
+			eng.SLA.RecordQualifiedAppt(dec.ClinicID)
+			booked++
+		}
+	}
+	log.Printf("seeded %d demo leads (%d booked)", len(names), booked)
+}
+
+// seedDemoCalendar gives each clinic a couple of doctors + services so the
+// appointment-calendar widget has real data to drive. Skipped if the clinic
+// already has doctors, or when BRAIN_SEED_DEMO=false.
+func seedDemoCalendar(st store.Store, eng *engine.Engine) {
+	if os.Getenv("BRAIN_SEED_DEMO") == "false" {
+		return
+	}
+	specialty := map[domain.Segment]string{
+		domain.SegmentImplant:   "İmplantoloji",
+		domain.SegmentAesthetic: "Estetik Diş Hekimliği",
+		domain.SegmentOrtho:     "Ortodonti",
+		domain.SegmentGeneral:   "Genel Diş Hekimliği",
+	}
+	service2 := map[domain.Segment]string{
+		domain.SegmentImplant:   "İmplant Muayenesi",
+		domain.SegmentAesthetic: "Gülüş Tasarımı Konsültasyonu",
+		domain.SegmentOrtho:     "Ortodonti Muayenesi",
+		domain.SegmentGeneral:   "Diş Temizliği",
+	}
+	first := []string{"Elif", "Mehmet", "Selin", "Caner"}
+	last := []string{"Demir", "Yıldız", "Aksoy", "Kaya"}
+	for i, c := range eng.Clinics() {
+		if len(st.ListDoctors(c.ID)) > 0 {
+			continue
+		}
+		d1 := domain.Doctor{
+			ID: "doc-" + c.ID + "-1", ClinicID: c.ID,
+			Name: first[i%len(first)] + " " + last[i%len(last)], Title: "Dt.",
+			Specialty: specialty[c.Segment], Active: true,
+			Days: []int{1, 2, 3, 4, 5}, StartHour: 9, EndHour: 17, SlotMins: 30,
+		}
+		d2 := domain.Doctor{
+			ID: "doc-" + c.ID + "-2", ClinicID: c.ID,
+			Name: first[(i+1)%len(first)] + " " + last[(i+2)%len(last)], Title: "Uzm. Dt.",
+			Specialty: specialty[c.Segment], Active: true,
+			Days: []int{1, 2, 3, 4, 6}, StartHour: 10, EndHour: 18, SlotMins: 30,
+		}
+		st.SaveDoctor(d1)
+		st.SaveDoctor(d2)
+		st.SaveService(domain.Service{
+			ID: "svc-" + c.ID + "-1", ClinicID: c.ID, Name: "Muayene & Konsültasyon",
+			DurationMins: 30, DoctorIDs: []string{d1.ID, d2.ID}, Active: true,
+		})
+		st.SaveService(domain.Service{
+			ID: "svc-" + c.ID + "-2", ClinicID: c.ID, Name: service2[c.Segment],
+			DurationMins: 45, DoctorIDs: []string{d1.ID}, Active: true,
+		})
+	}
+	log.Println("seeded demo doctors + services for calendar")
+}
+
 func runServe() {
 	loadEnvFile()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
@@ -196,6 +341,32 @@ func runServe() {
 	ag := agent.New(llm, eng)
 
 	server := api.New(eng, ag)
+	server.SetStore(st)
+
+	// Dashboard auth (JWT for the Next.js panel). Secret from BRAIN_JWT_SECRET; if
+	// empty, a random per-process secret is generated (dev — tokens invalidate on
+	// restart). TTL from BRAIN_JWT_TTL (default 24h).
+	jwtSecret := []byte(os.Getenv("BRAIN_JWT_SECRET"))
+	if len(jwtSecret) == 0 {
+		jwtSecret = make([]byte, 32)
+		_, _ = rand.Read(jwtSecret)
+		log.Println("auth: BRAIN_JWT_SECRET unset — using a random per-process secret (tokens invalidate on restart)")
+	}
+	ttl := 24 * time.Hour
+	if v := os.Getenv("BRAIN_JWT_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			ttl = d
+		}
+	}
+	authn := auth.NewAuthenticator(jwtSecret, ttl)
+	server.SetAuth(authn)
+	if origins := os.Getenv("BRAIN_CORS_ORIGINS"); origins != "" {
+		server.SetCORS(strings.Split(origins, ","))
+	}
+	seedAdmin(st, eng)
+	seedDemoLeads(eng, st)
+	seedDemoCalendar(st, eng)
+
 	cons := consent.NewStore()
 
 	// Horizontal scale: shared session state in Redis (only if built -tags redis).
@@ -243,9 +414,19 @@ func runServe() {
 		addr = ":8080"
 	}
 	handler := server.Handler()
-	if key := os.Getenv("BRAIN_API_KEY"); key != "" {
-		handler = auth.Middleware(key, auth.ProtectV1)(handler)
-		log.Println("auth: X-API-Key required on /v1/*")
+	// Auth gate is ALWAYS installed: it injects the user/clinic scope from a JWT
+	// when present. Enforcement turns on with BRAIN_REQUIRE_AUTH=true or a set
+	// BRAIN_API_KEY; otherwise /v1/* is dev-open (embedded console keeps working).
+	requireAuth := strings.EqualFold(os.Getenv("BRAIN_REQUIRE_AUTH"), "true")
+	apiKey := os.Getenv("BRAIN_API_KEY")
+	handler = authn.Middleware(apiKey, requireAuth, auth.ProtectV1)(handler)
+	switch {
+	case requireAuth:
+		log.Println("auth: JWT required on /v1/* (X-API-Key also accepted)")
+	case apiKey != "":
+		log.Println("auth: X-API-Key or JWT required on /v1/*")
+	default:
+		log.Println("auth: dev-open /v1/* (set BRAIN_REQUIRE_AUTH=true to enforce)")
 	}
 	// Production middleware chain (outermost first): recover → request-id →
 	// structured logging → security headers → rate limit → body cap.

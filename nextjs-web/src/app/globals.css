@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+/* Ported from the original design (brain/front/src/index.css): Inter for UI,
+   JetBrains Mono for numbers/codes. The font CSS variables are set on <html> by
+   next/font in the root layout. The zinc palette + status colors come from
+   Tailwind v4's defaults, so no custom color tokens are needed. */
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* WhatsApp speech-bubble arrow (ported from the original design). */
+.clip-path-whatsapp {
+  clip-path: polygon(100% 0, 0 0, 100% 100%);
+}
+
+/* Hide scrollbars on the calendar board — it pans by drag, so the bars are noise. */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

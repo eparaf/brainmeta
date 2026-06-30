@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Demo Diş Kliniği — BrainMeta Widget</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        color: #1d1d1f;
+        background: radial-gradient(120% 120% at 50% 0%, #ffffff 0%, #f5f5f7 55%, #ececed 100%);
+        min-height: 100vh;
+      }
+      header { padding: 76px 24px 28px; text-align: center; }
+      header h1 { margin: 0 0 10px; font-size: 42px; font-weight: 600; letter-spacing: -0.035em; }
+      header p { margin: 0 auto; max-width: 520px; font-size: 16px; line-height: 1.5; color: #86868b; }
+      .controls {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        padding: 8px 16px 4px;
+      }
+      .seg {
+        display: inline-flex;
+        background: #e9e9eb;
+        border-radius: 999px;
+        padding: 3px;
+        gap: 2px;
+      }
+      .seg button {
+        border: 0;
+        background: transparent;
+        border-radius: 999px;
+        padding: 9px 18px;
+        font-size: 13.5px;
+        font-weight: 600;
+        font-family: inherit;
+        color: #1d1d1f;
+        cursor: pointer;
+        transition: background 0.25s, box-shadow 0.25s;
+      }
+      .seg button.on {
+        background: #fff;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+      }
+      .pick {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #86868b;
+      }
+      .pick select {
+        padding: 8px 13px;
+        border: 0.5px solid rgba(0, 0, 0, 0.12);
+        border-radius: 11px;
+        font-size: 14px;
+        font-family: inherit;
+        background: rgba(255, 255, 255, 0.85);
+      }
+      main {
+        max-width: 460px;
+        margin: 0 auto;
+        padding: 34px 20px 40px;
+        display: flex;
+        justify-content: center;
+      }
+      .note { font-size: 13px; color: #aeaeb2; margin: 0 0 56px; text-align: center; }
+      .note code { color: #86868b; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Demo Diş Kliniği</h1>
+      <p>Bu sayfa bir klinik web sitesini taklit eder. Aşağıdaki kutu, siteye gömülen BrainMeta widget'ıdır.</p>
+    </header>
+
+    <div class="controls">
+      <div class="seg" id="seg">
+        <button data-mode="form" class="on">İletişim Formu</button>
+        <button data-mode="calendar">Randevu Takvimi</button>
+        <button data-mode="both">İkisi Birlikte</button>
+      </div>
+      <div class="pick">
+        Klinik:
+        <select id="clinic">
+          <option value="kadikoy">Kadıköy Diş</option>
+          <option value="umraniye">Ümraniye İmplant</option>
+          <option value="nisantasi">Nişantaşı Estetik</option>
+          <option value="sisli">Şişli Aile Diş</option>
+        </select>
+      </div>
+    </div>
+
+    <main><div id="widget-mount"></div></main>
+
+    <p class="note">
+      Gönderilen başvurular panelde <code>Sohbetler / Üyeler / Takvim</code> sayfalarında görünür.
+    </p>
+
+    <script>
+      var API = "http://localhost:8080";
+      var KEYS = {
+        kadikoy: "pk_f85cfa108010034cc9a3ef29c278af8e88bd",
+        umraniye: "pk_e0cc9ef2f0248e820ae16aacea09e5620de6",
+        nisantasi: "pk_699d3f5cd02aba01b993433f68bdabf61954",
+        sisli: "pk_143926be6f53683937093ab817c9f6383899",
+      };
+      var state = { mode: "form", clinic: "kadikoy" };
+
+      function load() {
+        var mount = document.getElementById("widget-mount");
+        mount.innerHTML = "";
+        var s = document.createElement("script");
+        s.src = API + "/embed/widget.js";
+        s.setAttribute("data-key", KEYS[state.clinic]);
+        s.setAttribute("data-mode", state.mode);
+        s.setAttribute("data-target", "#widget-mount");
+        document.body.appendChild(s);
+      }
+
+      var seg = document.getElementById("seg");
+      seg.addEventListener("click", function (e) {
+        var btn = e.target.closest("button");
+        if (!btn) return;
+        Array.prototype.forEach.call(seg.children, function (b) { b.classList.remove("on"); });
+        btn.classList.add("on");
+        state.mode = btn.getAttribute("data-mode");
+        load();
+      });
+      document.getElementById("clinic").addEventListener("change", function () {
+        state.clinic = this.value;
+        load();
+      });
+      load();
+    </script>
+  </body>
+</html>
