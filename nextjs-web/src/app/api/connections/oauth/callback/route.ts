@@ -23,19 +23,40 @@ export async function GET(req: NextRequest) {
   const result = await exchangeCode(state.provider, code);
   if (!result) return Response.redirect(`${back}?error=exchange_failed`, 302);
 
-  await fetch(`${env.BRAIN_API_URL}/v1/connections`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      Authorization: `Bearer ${session.brainToken}`,
-    },
-    body: JSON.stringify({
-      clinicId: state.clinicId,
-      type: state.type,
-      connected: true,
-      detail: result.detail,
-    }),
-  }).catch(() => {});
+  // If the provider returned a refresh token, hand it to the backend's secret
+  // store via the write-only token endpoint — that ALSO flips the connection to
+  // connected=true and is what enables live ad-platform sync. Without a refresh
+  // token (e.g. re-consent that omitted it) fall back to a status-only upsert.
+  if (result.refreshToken) {
+    await fetch(`${env.BRAIN_API_URL}/v1/connections/oauth-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${session.brainToken}`,
+      },
+      body: JSON.stringify({
+        clinicId: state.clinicId,
+        provider: state.provider,
+        refreshToken: result.refreshToken,
+        type: state.type,
+        detail: result.detail,
+      }),
+    }).catch(() => {});
+  } else {
+    await fetch(`${env.BRAIN_API_URL}/v1/connections`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${session.brainToken}`,
+      },
+      body: JSON.stringify({
+        clinicId: state.clinicId,
+        type: state.type,
+        connected: true,
+        detail: result.detail,
+      }),
+    }).catch(() => {});
+  }
 
   return Response.redirect(`${back}?connected=${encodeURIComponent(state.type)}`, 302);
 }

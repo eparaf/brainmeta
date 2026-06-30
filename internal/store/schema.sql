@@ -58,6 +58,17 @@ CREATE TABLE IF NOT EXISTS connections (
 );
 CREATE INDEX IF NOT EXISTS idx_conn_clinic ON connections(clinic_id);
 
+-- Ad-platform OAuth secrets (refresh tokens) for live spend sync. SEPARATE from
+-- `connections` (which is status-only) so secrets never leak through that surface.
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  id         TEXT PRIMARY KEY,        -- "<clinicID>:<provider>"
+  clinic_id  TEXT,
+  provider   TEXT,                    -- google | meta
+  data       JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_provider ON oauth_tokens(provider);
+
 -- Clinic-authored WhatsApp template drafts (PENDING until Meta approves).
 CREATE TABLE IF NOT EXISTS templates (
   id        TEXT PRIMARY KEY,

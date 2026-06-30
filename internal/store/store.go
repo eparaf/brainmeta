@@ -54,6 +54,13 @@ type Store interface {
 	SaveTemplate(domain.TemplateDraft)
 	ListTemplates(clinicID string) []domain.TemplateDraft
 
+	// OAuth secrets for ad-platform sync (refresh tokens). Kept apart from
+	// Connection so secrets never leak through the status surface. Listed so the
+	// server can spin up a live sync per clinic that has one.
+	UpsertOAuthToken(domain.OAuthToken)
+	GetOAuthToken(clinicID, provider string) (domain.OAuthToken, bool)
+	ListOAuthTokens(provider string) []domain.OAuthToken
+
 	// Embeddable widget config (web form + calendar). Keyed by clinic, and looked
 	// up by the public embed key on the public endpoints.
 	SaveWidgetConfig(domain.WidgetConfig)
@@ -82,6 +89,7 @@ type Memory struct {
 	users        map[string]domain.User       // keyed by ID
 	usersByEmail map[string]string            // lowercased email → ID
 	connections  map[string]domain.Connection // keyed by connection ID
+	oauthTokens  map[string]domain.OAuthToken // keyed by "<clinicID>:<provider>"
 	templates    map[string]domain.TemplateDraft
 	widgets      map[string]domain.WidgetConfig // keyed by clinic ID
 	widgetByKey  map[string]string              // public key → clinic ID
@@ -98,6 +106,7 @@ func NewMemory() *Memory {
 		users:        map[string]domain.User{},
 		usersByEmail: map[string]string{},
 		connections:  map[string]domain.Connection{},
+		oauthTokens:  map[string]domain.OAuthToken{},
 		templates:    map[string]domain.TemplateDraft{},
 		widgets:      map[string]domain.WidgetConfig{},
 		widgetByKey:  map[string]string{},
@@ -259,6 +268,31 @@ func (m *Memory) ListConnections(clinicID string) []domain.Connection {
 	for _, c := range m.connections {
 		if clinicID == "" || c.ClinicID == clinicID {
 			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (m *Memory) UpsertOAuthToken(t domain.OAuthToken) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.oauthTokens[t.ClinicID+":"+t.Provider] = t
+}
+
+func (m *Memory) GetOAuthToken(clinicID, provider string) (domain.OAuthToken, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	t, ok := m.oauthTokens[clinicID+":"+provider]
+	return t, ok
+}
+
+func (m *Memory) ListOAuthTokens(provider string) []domain.OAuthToken {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []domain.OAuthToken
+	for _, t := range m.oauthTokens {
+		if provider == "" || t.Provider == provider {
+			out = append(out, t)
 		}
 	}
 	return out

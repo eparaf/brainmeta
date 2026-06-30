@@ -100,7 +100,7 @@ export function buildAuthorizeUrl(provider: Provider, type: string, state: strin
 export async function exchangeCode(
   provider: Provider,
   code: string,
-): Promise<{ accessToken: string; detail: string } | null> {
+): Promise<{ accessToken: string; refreshToken?: string; detail: string } | null> {
   const cfg = PROVIDERS[provider];
   try {
     if (provider === "meta") {
@@ -134,9 +134,13 @@ export async function exchangeCode(
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body,
       })
-    ).json()) as { access_token?: string };
+    ).json()) as { access_token?: string; refresh_token?: string };
     if (!tok.access_token) return null;
-    return { accessToken: tok.access_token, detail: "Google Ads bağlı" };
+    return {
+      accessToken: tok.access_token,
+      refreshToken: tok.refresh_token, // present because access_type=offline+prompt=consent
+      detail: "Google Ads bağlı",
+    };
   } catch {
     return null;
   }

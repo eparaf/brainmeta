@@ -234,7 +234,7 @@ const (
 // boundary instead (see api.publicUser).
 type User struct {
 	ID           string    `json:"id"`
-	Email        string    `json:"email"`        // unique, lowercased
+	Email        string    `json:"email"` // unique, lowercased
 	Name         string    `json:"name"`
 	PasswordHash string    `json:"passwordHash"` // PHC string; never returned to clients
 	Role         Role      `json:"role"`
@@ -246,17 +246,30 @@ type User struct {
 // form). The dashboard's "Bağlantılar" page reads/writes these. Detail holds only
 // a masked identifier or status string — NEVER a secret/token.
 type Connection struct {
-	ID        string    `json:"id"`       // "<clinicID>:<type>"
+	ID        string    `json:"id"` // "<clinicID>:<type>"
 	ClinicID  string    `json:"clinicId"`
-	Type      string    `json:"type"`     // whatsapp | meta_ads | google_ads | web_form
+	Type      string    `json:"type"` // whatsapp | meta_ads | google_ads | web_form
 	Connected bool      `json:"connected"`
 	Detail    string    `json:"detail"` // masked status only — no secrets
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// OAuthToken holds the SECRET credentials for a clinic's ad-platform integration
+// (the refresh token + ids needed to call the platform API on the clinic's behalf).
+// It is deliberately SEPARATE from Connection — Connection carries only masked
+// status and is safe to return to the panel; OAuthToken is never serialised back
+// to any client. Persisted (snapshot / Postgres) so live sync survives restarts.
+type OAuthToken struct {
+	ClinicID     string    `json:"clinicId"`
+	Provider     string    `json:"provider"` // "google" | "meta"
+	RefreshToken string    `json:"refreshToken"`
+	CustomerID   string    `json:"customerId"` // Google Ads customer id (no dashes)
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
 // WidgetField is one configurable field of the embeddable web form.
 type WidgetField struct {
-	Key      string `json:"key"`   // name | phone | message | email
+	Key      string `json:"key"` // name | phone | message | email
 	Label    string `json:"label"`
 	Required bool   `json:"required"`
 	Enabled  bool   `json:"enabled"`

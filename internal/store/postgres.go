@@ -254,6 +254,44 @@ func (s *StorePG) ListConnections(clinicID string) []domain.Connection {
 	return out
 }
 
+func (s *StorePG) UpsertOAuthToken(t domain.OAuthToken) {
+	b, _ := json.Marshal(t)
+	s.exec(`INSERT INTO oauth_tokens(id,clinic_id,provider,data) VALUES($1,$2,$3,$4)
+	        ON CONFLICT(id) DO UPDATE SET clinic_id=EXCLUDED.clinic_id,provider=EXCLUDED.provider,data=EXCLUDED.data`,
+		t.ClinicID+":"+t.Provider, t.ClinicID, t.Provider, b)
+}
+
+func (s *StorePG) GetOAuthToken(clinicID, provider string) (domain.OAuthToken, bool) {
+	var b []byte
+	if err := s.db.QueryRow(`SELECT data FROM oauth_tokens WHERE id=$1`, clinicID+":"+provider).Scan(&b); err != nil {
+		return domain.OAuthToken{}, false
+	}
+	var t domain.OAuthToken
+	if json.Unmarshal(b, &t) != nil {
+		return domain.OAuthToken{}, false
+	}
+	return t, true
+}
+
+func (s *StorePG) ListOAuthTokens(provider string) []domain.OAuthToken {
+	rows, err := s.db.Query(`SELECT data FROM oauth_tokens WHERE $1='' OR provider=$1 ORDER BY id`, provider)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []domain.OAuthToken
+	for rows.Next() {
+		var b []byte
+		if rows.Scan(&b) == nil {
+			var t domain.OAuthToken
+			if json.Unmarshal(b, &t) == nil {
+				out = append(out, t)
+			}
+		}
+	}
+	return out
+}
+
 func (s *StorePG) SaveTemplate(t domain.TemplateDraft) {
 	b, _ := json.Marshal(t)
 	s.exec(`INSERT INTO templates(id,clinic_id,status,data) VALUES($1,$2,$3,$4)

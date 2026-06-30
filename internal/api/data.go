@@ -334,6 +334,53 @@ func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.connectionsForClinic(clinicID))
 }
 
+// handleOAuthToken stores the SECRET refresh token captured by the panel's OAuth
+// flow, so the server can run live ad-platform sync for that clinic. Write-only:
+// it never returns the token (only an ok). Kept apart from /v1/connections, which
+// is status-only. On a successful write it also flips the matching Connection to
+// connected=true so the panel reflects reality.
+func (s *Server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, 503, map[string]string{"error": "store not configured"})
+		return
+	}
+	u, _ := auth.UserFrom(r.Context())
+	var b struct {
+		ClinicID     string `json:"clinicId"`
+		Provider     string `json:"provider"` // google | meta
+		RefreshToken string `json:"refreshToken"`
+		CustomerID   string `json:"customerId"`
+		Detail       string `json:"detail"`
+		Type         string `json:"type"` // connection type to mark connected (e.g. google_ads)
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	if b.ClinicID == "" || b.Provider == "" || b.RefreshToken == "" {
+		writeJSON(w, 400, map[string]string{"error": "clinicId, provider, refreshToken required"})
+		return
+	}
+	if !auth.CanAccessClinic(u, b.ClinicID) {
+		writeJSON(w, 403, map[string]string{"error": "forbidden"})
+		return
+	}
+	s.store.UpsertOAuthToken(domain.OAuthToken{
+		ClinicID:     b.ClinicID,
+		Provider:     b.Provider,
+		RefreshToken: b.RefreshToken,
+		CustomerID:   b.CustomerID,
+		UpdatedAt:    time.Now(),
+	})
+	if b.Type != "" {
+		s.store.UpsertConnection(domain.Connection{
+			ID: b.ClinicID + ":" + b.Type, ClinicID: b.ClinicID, Type: b.Type,
+			Connected: true, Detail: b.Detail, UpdatedAt: time.Now(),
+		})
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
 // connectionsForClinic returns the 4 integration types for a clinic: a stored row
 // if present, otherwise a default derived (read-only) from configured env.
 func (s *Server) connectionsForClinic(clinicID string) []domain.Connection {

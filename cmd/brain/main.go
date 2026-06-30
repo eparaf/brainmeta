@@ -31,6 +31,7 @@ import (
 	"disci/brain/internal/datasource"
 	"disci/brain/internal/domain"
 	"disci/brain/internal/engine"
+	"disci/brain/internal/googleads"
 	"disci/brain/internal/httpx"
 	"disci/brain/internal/meta"
 	"disci/brain/internal/persist"
@@ -465,6 +466,51 @@ func runServe() {
 				}
 			}
 		}()
+	}
+
+	// Live Google Ads sync: for every clinic that completed the OAuth flow (a
+	// stored refresh token), pull real CPL, push budgets, upload conversions on a
+	// schedule. Needs an account-level developer token; without it Google rejects
+	// every call, so we stay off (no mock) and log why.
+	if devTok := os.Getenv("GOOGLE_ADS_DEVELOPER_TOKEN"); devTok != "" {
+		gClientID := os.Getenv("GOOGLE_CLIENT_ID")
+		gSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+		loginCust := os.Getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID")
+		convAction := os.Getenv("GOOGLE_ADS_CONVERSION_ACTION")
+		started := 0
+		for _, tok := range st.ListOAuthTokens("google") {
+			gc := googleads.New(gClientID, gSecret, tok.RefreshToken, devTok, tok.CustomerID, loginCust)
+			gc.ConvAction = convAction
+			// Auto-discover the customer id when the panel didn't capture one.
+			if gc.CustomerID == "" {
+				if ids, err := gc.ListAccessibleCustomers(ctx); err == nil && len(ids) > 0 {
+					gc.CustomerID = ids[0]
+				} else if err != nil {
+					log.Printf("google ads %s: cannot resolve customer id: %v", tok.ClinicID, err)
+					continue
+				}
+			}
+			sync := &datasource.SyncService{Eng: eng, Ads: gc, Messenger: cloud}
+			started++
+			go func(clinic string) {
+				t := time.NewTicker(15 * time.Minute)
+				defer t.Stop()
+				sync.SyncAds(context.Background()) // prime immediately
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						sync.SyncAds(context.Background())
+					}
+				}
+			}(tok.ClinicID)
+		}
+		if started > 0 {
+			log.Printf("google ads: live sync for %d clinic(s) (15m)", started)
+		} else {
+			log.Println("google ads: developer token set but no clinic has an OAuth refresh token yet")
+		}
 	}
 
 	// Periodic snapshot saver (every 60s) + weekly posterior decay.

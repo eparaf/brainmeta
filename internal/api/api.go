@@ -156,6 +156,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/templates", s.handleCreateTemplate)
 	mux.HandleFunc("GET /v1/connections", s.handleConnections)
 	mux.HandleFunc("POST /v1/connections", s.handleConnections)
+	mux.HandleFunc("POST /v1/connections/oauth-token", s.handleOAuthToken)
 
 	// Embeddable widget: per-clinic config (protected) + public submission surface.
 	mux.HandleFunc("GET /v1/widget", s.handleWidgetGet)
