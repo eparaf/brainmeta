@@ -35,7 +35,9 @@ import (
 	"disci/brain/internal/httpx"
 	"disci/brain/internal/meta"
 	"disci/brain/internal/persist"
+	"disci/brain/internal/priors"
 	"disci/brain/internal/reminder"
+	"disci/brain/internal/scenario"
 	"disci/brain/internal/session"
 	"disci/brain/internal/sim"
 	"disci/brain/internal/store"
@@ -55,9 +57,45 @@ func main() {
 		runChat()
 	case "serve":
 		runServe()
+	case "scenario":
+		runScenario()
+	case "google-oauth":
+		runGoogleOAuth()
 	default:
-		fmt.Println("usage: brain [sim|chat|serve]")
+		fmt.Println("usage: brain [sim|chat|serve|scenario|google-oauth]")
 		os.Exit(1)
+	}
+}
+
+// runScenario prints a Monte-Carlo appointment forecast for each demo clinic —
+// "with this budget, how many appointments per month?" — spending no money and
+// calling no LLM. Proves the scenario engine end-to-end from the CLI.
+func runScenario() {
+	cfg := config.Default()
+	eng := engine.New(cfg, store.NewMemory())
+	sim.Setup(eng, cfg.Seed)
+	sc := scenario.New(nil) // cold-start PriorKeywordSource (no credentials)
+	for _, c := range eng.Clinics() {
+		plat := domain.PlatformGoogle
+		aud := priors.AudienceLocalTR
+		if c.Segment == domain.SegmentAesthetic {
+			aud = priors.AudienceTourism
+		}
+		plan := scenario.CampaignPlan{
+			ClinicID:      c.ID,
+			Segment:       c.Segment,
+			Platform:      plat,
+			Audience:      aud,
+			MonthlyBudget: c.MonthlyAdBudget,
+			Seed:          cfg.Seed,
+		}
+		res, err := sc.Simulate(plan)
+		if err != nil {
+			log.Printf("scenario %s: %v", c.ID, err)
+			continue
+		}
+		fmt.Printf("\n--- %s (%s) ---\n", c.Name, c.ID)
+		fmt.Print(scenario.FormatReport(plan, res))
 	}
 }
 

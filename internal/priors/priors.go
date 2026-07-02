@@ -152,6 +152,57 @@ func ReminderLift(name string) float64 { return reminderLift[name] }
 // because first-time ad leads no-show far more often.
 const BaseShowProb = 0.72
 
+// CPCTRY returns the cold-start cost-per-CLICK (not per-lead) in TRY for a
+// platform × audience, from [CPL-G]/[CPL-F] (Google dental CPC ≈ $8.00, Facebook
+// CPC ≈ $9.78). Used by the scenario engine to turn a budget into a click volume.
+// Local-TR clicks run far cheaper than the Western tourism benchmark (same ratio
+// as CPLTRY). CPC is the per-click cost; CPLTRY above is the downstream per-lead
+// cost — they are different points in the funnel.
+func CPCTRY(plat domain.Platform, aud Audience) float64 {
+	var usd float64
+	switch plat {
+	case domain.PlatformGoogle:
+		usd = 8.00 // [CPL-G]
+	default: // Meta/Facebook
+		usd = 9.78 // [CPL-F]
+	}
+	full := usd * USDTRY
+	if aud == AudienceTourism {
+		return full
+	}
+	// Local Turkish dental CPCs run roughly an order of magnitude lower in TRY
+	// (lower competition, lira-denominated) — mirror the CPLTRY local scaling.
+	if plat == domain.PlatformGoogle {
+		return full * 0.14
+	}
+	return full * 0.07
+}
+
+// ClickToLead is the ad-click → captured-lead (someone who actually contacts the
+// clinic) conversion, from [CONV] (healthcare PPC lead conversion 2.4–11%). This
+// is the funnel step BEFORE the qualify/book/show rates in Funnel. The Low/High
+// bound the Monte Carlo spread; ClickToLeadRate is the per-segment central value
+// (higher-intent segments convert a click to contact more readily).
+const (
+	ClickToLeadLow  = 0.024
+	ClickToLeadHigh = 0.11
+)
+
+var clickToLeadBySegment = map[domain.Segment]float64{
+	domain.SegmentAesthetic: 0.05, // tourism: more price-shopping before contact
+	domain.SegmentImplant:   0.07, // pain/function-driven, contacts readily
+	domain.SegmentOrtho:     0.06,
+	domain.SegmentGeneral:   0.08, // low-friction checkup enquiries
+}
+
+// ClickToLeadRate returns the cold-start click→lead rate for a segment.
+func ClickToLeadRate(seg domain.Segment) float64 {
+	if r, ok := clickToLeadBySegment[seg]; ok {
+		return r
+	}
+	return clickToLeadBySegment[domain.SegmentGeneral]
+}
+
 // FastResponseSecs is the lead-response time below which conversion is maximised,
 // from [SPEED]. The WhatsApp agent must reply within this window.
 const FastResponseSecs = 600 // 10 minutes

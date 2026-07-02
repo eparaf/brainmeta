@@ -143,6 +143,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/leads", s.handleLead)         // a pre-qualified lead arrived
 	mux.HandleFunc("POST /v1/outcomes", s.handleOutcome)   // a result came back (feedback loop)
 	mux.HandleFunc("POST /v1/budget/plan", s.handleBudget) // run a budget allocation cycle
+	mux.HandleFunc("POST /v1/scenario", s.handleScenario)  // Monte-Carlo appointment forecast (no spend)
 	mux.HandleFunc("GET /v1/sla", s.handleSLA)             // guarantee health
 	mux.HandleFunc("GET /v1/arms", s.handleArms)           // learned ad-arm stats
 	mux.HandleFunc("GET /v1/templates", s.handleTemplates) // approved templates + drafts
