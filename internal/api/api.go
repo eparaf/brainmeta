@@ -17,6 +17,7 @@ import (
 	"disci/brain/internal/domain"
 	"disci/brain/internal/engine"
 	"disci/brain/internal/httpx"
+	"disci/brain/internal/scenario"
 	"disci/brain/internal/session"
 	"disci/brain/internal/store"
 	"disci/brain/internal/voice"
@@ -61,6 +62,8 @@ type Server struct {
 	store       store.Store         // entity store (for dashboard auth/list endpoints)
 	authn       *auth.Authenticator // JWT signer/verifier (nil → /v1/auth/* return 503)
 	corsOrigins map[string]bool     // allowlist; empty → permissive "*" (dev)
+
+	keywords scenario.KeywordSource // live keyword data for /v1/scenario (nil → cold-start priors)
 }
 
 // New builds the HTTP server. The agent may be nil (then /v1/whatsapp is off).

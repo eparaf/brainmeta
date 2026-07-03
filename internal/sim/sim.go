@@ -12,6 +12,7 @@ package sim
 import (
 	"fmt"
 	"math/rand"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,6 +36,8 @@ type World struct {
 	trueShow map[string]float64
 	// trueClose[clinicID] real close rate.
 	trueClose map[string]float64
+
+	drifts []Drift // scheduled hidden regime shifts (see Drift, SetDrifts)
 }
 
 // Result is the simulation summary.
@@ -121,11 +124,79 @@ func Setup(eng *engine.Engine, seed int64) *World {
 	return w
 }
 
-// Run simulates `days` of operation. Each day it: allocates budget, draws leads
-// per arm in proportion to that arm's funded budget / true CPL, handles each
-// lead through the engine, then resolves outcomes (book/show/close) against the
-// hidden world and feeds them back.
+// Run simulates `days` of operation using the brain's own bandit allocator. Each
+// day it: allocates budget, draws leads per arm in proportion to that arm's
+// funded budget / true CPL, handles each lead through the engine, then resolves
+// outcomes (book/show/close) against the hidden world and feeds them back.
 func (w *World) Run(eng *engine.Engine, st *store.Memory, days int) *Result {
+	return w.RunWithAllocator(eng, st, days, BanditAllocator)
+}
+
+// AllocatorFunc lets the daily budget-allocation step be swapped out. The
+// default is the brain's own bandit (BanditAllocator); RunWithAllocator's caller
+// can substitute a baseline (e.g. EqualSplitAllocator) to validate the bandit's
+// value OFFLINE, against the same hidden world, before it's trusted with real
+// spend — the discipline both MABWiser's simulation utility and the sony/ABA
+// bandit-budgeting paper treat as a first-class step, not an afterthought.
+type AllocatorFunc func(eng *engine.Engine, daysInMonth float64) []budget.Allocation
+
+// BanditAllocator is the brain's own Motor 2 (Thompson sampling + water-filling).
+func BanditAllocator(eng *engine.Engine, daysInMonth float64) []budget.Allocation {
+	allocs, _ := eng.PlanBudget(daysInMonth)
+	return allocs
+}
+
+// EqualSplitAllocator is the naive "manual/agency" baseline: each clinic's daily
+// budget is split EVENLY across its registered arms, ignoring all learned
+// quality. This is the strategy a human media buyer without a bandit runs — the
+// comparison point the open-source bandit-budgeting literature (e.g. sony/ABA)
+// uses to demonstrate a bandit's real value before it's trusted with production
+// spend.
+func EqualSplitAllocator(eng *engine.Engine, daysInMonth float64) []budget.Allocation {
+	armsByClinic := map[string][]string{}
+	for _, row := range eng.Budget.Snapshot() {
+		cid, _ := row["clinicId"].(string)
+		aid, _ := row["armId"].(string)
+		armsByClinic[cid] = append(armsByClinic[cid], aid)
+	}
+	var out []budget.Allocation
+	for _, c := range eng.Clinics() {
+		arms := armsByClinic[c.ID]
+		if len(arms) == 0 {
+			continue
+		}
+		daily := c.MonthlyAdBudget / daysInMonth / float64(len(arms))
+		for _, armID := range arms {
+			out = append(out, budget.Allocation{ArmID: armID, ClinicID: c.ID, DailyBudget: daily})
+		}
+	}
+	return out
+}
+
+// Drift models a one-time step change in an arm's hidden qualify-rate — creative
+// fatigue, a new competitor, or a seasonal shift (the non-stationarity sony/ABA's
+// bandit-budgeting paper calls out: static posteriors go stale as ad markets
+// drift). It takes effect once, at DayIndex, during Run/RunWithAllocator.
+type Drift struct {
+	ArmID    string
+	DayIndex int
+	NewTheta float64
+}
+
+// SetDrifts installs a schedule of hidden regime shifts to apply during Run.
+func (w *World) SetDrifts(d []Drift) { w.drifts = d }
+
+func (w *World) applyDrifts(day int) {
+	for _, d := range w.drifts {
+		if d.DayIndex == day {
+			w.trueTheta[d.ArmID] = d.NewTheta
+		}
+	}
+}
+
+// RunWithAllocator is Run with the allocation strategy as an explicit parameter
+// — see AllocatorFunc.
+func (w *World) RunWithAllocator(eng *engine.Engine, st *store.Memory, days int, alloc AllocatorFunc) *Result {
 	res := &Result{Days: days, PerClinic: map[string]*ClinicResult{}}
 	for _, c := range st.ListClinics() {
 		res.PerClinic[c.ID] = &ClinicResult{Name: c.Name, Guaranteed: c.GuaranteedApptsPerMonth}
@@ -137,8 +208,15 @@ func (w *World) Run(eng *engine.Engine, st *store.Memory, days int) *Result {
 	for day := 0; day < days; day++ {
 		now := base.AddDate(0, 0, day)
 		st.ResetSeats()
+		w.applyDrifts(day)
 
-		allocs, _ := eng.PlanBudget(30)
+		// Sort by ArmID so lead generation consumes the shared w.rng in a fixed
+		// order regardless of the allocator's own (possibly map-iteration-derived)
+		// output order — otherwise two runs with identical seeds/config could
+		// realise different hidden outcomes purely from processing order, which
+		// would break reproducible offline replay/comparison.
+		allocs := alloc(eng, 30)
+		sort.Slice(allocs, func(i, j int) bool { return allocs[i].ArmID < allocs[j].ArmID })
 
 		for _, a := range allocs {
 			if a.DailyBudget <= 0 {

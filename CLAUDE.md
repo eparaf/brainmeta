@@ -34,7 +34,14 @@ Reklam → WhatsApp AI ajanı → niteleme → beyin karar → randevu → hatı
 - **internal/consent / auth** — KVKK opt-out + /v1 API-key.
 - **internal/datasource** — dış dünya arayüzleri (LeadSource/AdPlatform/PMS/Messenger) + SyncService.
 - **internal/reminder** — 24s/2s hatırlatma scheduler.
-- **internal/api** — HTTP (CORS + gömülü konsol + webhooks). **cmd/brain** — sim | chat | serve.
+- **internal/api** — HTTP (CORS + gömülü konsol + webhooks). **cmd/brain** — sim | chat | serve |
+  scenario | google-oauth | google-ads-test | compare.
+- **internal/scenario** — çevrimdışı Monte-Carlo senaryo motoru: bütçe→randevu tahmini
+  (pesimist/gerçekçi/optimist, P10/P50/P90). `KeywordSource` seam: kredisiz `PriorKeywordSource`
+  (cold-start) ↔ canlı `googleads.LiveKeywordSource` (Keyword Planner). `POST /v1/scenario`.
+- **internal/googleads/campaigns.go** — Faz B: `GenerateKeywordIdeas` (Keyword Planner, read-only),
+  `CreateSearchCampaign` (PAUSED, sıfır harcama) + `ListCampaigns`. `brain google-ads-test` CLI ile
+  uçtan uca doğrulanır (test hesabı gerekir — bkz. docs/specs/faz-b-google-ads.md).
 
 ## DİKKAT EDİLECEKLER (bunları bozma)
 1. **LLM önerir, BEYİN karar verir.** Ajan; randevu durumunu (booked/iptal/slot)
@@ -57,13 +64,32 @@ Reklam → WhatsApp AI ajanı → niteleme → beyin karar → randevu → hatı
 10. **Testler deterministik** (seeded RNG). Yeni motor → yeni test. `go test ./...` yeşil kalsın.
 11. **Commit mesajları:** Claude/AI/araç ibaresi YOK. Co-author trailer ekleme. Bunun
     yerine mesajın sonuna kısa bir **`Yavuz notu: ...`** satırı düş.
+12. **Auth prod-guard:** `BRAIN_REQUIRE_AUTH=true` iken `BRAIN_JWT_SECRET` boşsa VEYA admin
+    parolası hâlâ default (`admin1234`) ise `serve` **başlamayı reddeder** (cmd/brain/main.go).
+    `/v1/auth/register` her modda **admin-only** (dev-open dahil) — açık bırakma, privilege-
+    escalation deliği açar.
+13. **`budget.Allocate` sıralı iterasyon şart.** Klinik/arm map'leri ID'ye göre sort edilmeden
+    range'lenirse (Go map sırası rastgele), paylaşılan Thompson-sampling RNG'si farklı sırada
+    tüketilir → aynı state'te iki çağrı FARKLI sonuç verir. Bunu bozma; `internal/sim`'deki
+    offline-replay/karşılaştırma harness'i buna bağımlı.
+14. **No-show `PShow` KALİBRE olasılıktır** (Platt scaling, `internal/noshow`). Ham lojistik
+    çıktısını DEĞİL, `PShow()`'u kullan — Poisson-binom overbooking'in doğruluğu buna bağlı.
+    Yeni predictor ekleyeceksen aynı deseni (identity başlangıç + online kalibrasyon) uygula.
+15. **`brain compare` bir GERÇEK bulgu taşıyor, gizleme.** 20-seed ortalamasında mevcut ayarla
+    bandit (Thompson+water-filling) ROAS'ta naif eşit-bölmeyi YENMİYOR (~%-2/-3, tek seed'de
+    %-30'a kadar). Kök neden araştırması sürüyor (bkz. docs/DURUM-RAPORU.md). Bu motoru
+    "kanıtlanmış üstün" varsayma — `brain compare` ile doğrulamadan production tuning değiştirme.
 
 ## Çalıştırma
 ```
-go run ./cmd/brain sim     # 30 günlük simülasyon (beyni kanıtlar)
-go run ./cmd/brain chat    # mock ajan demo
-go run ./cmd/brain serve   # API + gömülü konsol :8080
-go test ./...              # tüm testler
+go run ./cmd/brain sim              # 30 günlük simülasyon (beyni kanıtlar)
+go run ./cmd/brain chat             # mock ajan demo
+go run ./cmd/brain serve            # API + gömülü konsol :8080
+go run ./cmd/brain scenario         # bütçe→randevu Monte-Carlo demo (kredisiz)
+go run ./cmd/brain google-oauth     # Google Ads refresh token üret (bir kez login)
+go run ./cmd/brain google-ads-test  # test hesabında keyword+kampanya uçtan uca (sıfır harcama)
+go run ./cmd/brain compare          # bandit vs manuel ROAS — canlıya çıkmadan doğrulama
+go test ./...                       # tüm testler
 ```
 UI: `cd ui && npm install && npm run dev` (Vite+React, BACKEND_URL ile backend'e bağlanır).
 Panel: `cd nextjs-web && npm run dev` (Next.js, :3002). Takvim modülü: `/calendar` (slug İngilizce).
@@ -84,7 +110,19 @@ go build -tags "pgx redis" ./cmd/brain  # production
 `GEMINI_API_KEY`/`ANTHROPIC_API_KEY` (ajan), `WHATSAPP_TOKEN`+`WHATSAPP_PHONE_NUMBER_ID`+
 `WHATSAPP_VERIFY_TOKEN`, `META_TOKEN`+`META_AD_ACCOUNT_ID`+`META_PIXEL_ID`, `BRAIN_API_KEY`,
 `DATABASE_URL`, `REDIS_URL`, `BRAIN_ADDR`, `BRAIN_SNAPSHOT`. Boşsa o özellik mock/kapalı.
+Google Ads (Faz B): `GOOGLE_CLIENT_ID`+`GOOGLE_CLIENT_SECRET` (OAuth client, Desktop app
+tipi önerilir — Web tipinde `http://127.0.0.1:8765/` redirect'i eklenmeli),
+`GOOGLE_ADS_DEVELOPER_TOKEN` (Test Account erişimli yeterli), `GOOGLE_ADS_REFRESH_TOKEN`
+(`google-oauth` ile üretilir), `GOOGLE_ADS_LOGIN_CUSTOMER_ID` + `GOOGLE_ADS_CUSTOMER_ID`
+(**gerçek bir TEST manager/client hesabı olmalı** — normal/production hesaplar
+`CUSTOMER_NOT_ENABLED`/`PERMISSION_DENIED` döner; test manager: ads.google.com/nav/selectaccount?sf=mt).
 
-## Yol haritası (sıradaki)
-Per-clinic **Connection store** (env yerine UI'dan klinik-bazlı Meta/WhatsApp bağlama) +
-Meta Embedded Signup OAuth. Beyin multi-tenant olduğu için bu bir resolver + tablo + onboarding işi.
+## Durum & yol haritası
+Güncel tamamlanmışlık + öncelikli to-do listesi: **`docs/DURUM-RAPORU.md`**. Özet:
+- **Bitti:** P0 auth sertleştirme (privilege-escalation kapatıldı, prod guard'lar), senaryo motoru
+  (Faz A+B), no-show Platt kalibrasyonu, bandit change-detection + offline-replay harness.
+- **Sırada (P1):** bandit ROAS açığının kök nedeni (bkz. kural 15), Postgres'i default persistence
+  yapmak, canlı outcome/PMS loop'unu bağlamak, API clinic-scoping test kapsamını genişletmek.
+- **Sonra (P2):** per-clinic **Connection store** (UI'dan Meta/WhatsApp/Google bağlama) + Meta
+  Embedded Signup OAuth (resolver + tablo + onboarding), Meta Lead Ads webhook'unu tamamlamak,
+  LLM tool-calling'i text-agent'a bağlamak, 3 frontend'i tekilleştirmek (`front/` arşivlenecek).

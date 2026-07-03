@@ -29,6 +29,15 @@ type Predictor struct {
 	b    float64
 	lr   float64
 	seen int
+
+	// Platt calibration on the raw logit: pCal = sigmoid(calA·z + calB). Starts as
+	// the identity (1, 0) so it's a no-op on day one, then is learned online. This
+	// matters because the calibrated show probabilities feed the Poisson-binomial
+	// overbooking solver: if the model is systematically over/under-confident, the
+	// tail-risk math (P(arrivals > seats)) is wrong and we over- or under-book.
+	calA  float64
+	calB  float64
+	calLR float64
 }
 
 // feature order (dim 9):
@@ -37,7 +46,10 @@ type Predictor struct {
 const showDim = 9
 
 func NewPredictor() *Predictor {
-	return &Predictor{w: make([]float64, showDim), b: mathx.Logit(baseShowProb()), lr: 0.05}
+	return &Predictor{
+		w: make([]float64, showDim), b: mathx.Logit(baseShowProb()), lr: 0.05,
+		calA: 1, calB: 0, calLR: 0.02, // identity calibration until data says otherwise
+	}
 }
 
 func showFeatures(a Appt) []float64 {
@@ -73,30 +85,41 @@ type Appt struct {
 	Segment        domain.Segment
 }
 
-// predict computes the show probability without locking (callers hold the lock).
-func (p *Predictor) predict(x []float64) float64 {
-	return mathx.Sigmoid(mathx.Dot(p.w, x) + p.b)
-}
+// rawLogit is the base model's score (pre-calibration). Callers hold the lock.
+func (p *Predictor) rawLogit(x []float64) float64 { return mathx.Dot(p.w, x) + p.b }
 
-// PShow returns the predicted probability the patient shows up.
+// predict is the base model's UNCALIBRATED probability (used for training).
+func (p *Predictor) predict(x []float64) float64 { return mathx.Sigmoid(p.rawLogit(x)) }
+
+// calibrated applies Platt scaling to a raw logit → a calibrated probability.
+func (p *Predictor) calibrated(z float64) float64 { return mathx.Sigmoid(p.calA*z + p.calB) }
+
+// PShow returns the CALIBRATED probability the patient shows up — this is what the
+// overbooking solver consumes.
 func (p *Predictor) PShow(a Appt) float64 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return p.predict(showFeatures(a))
+	return p.calibrated(p.rawLogit(showFeatures(a)))
 }
 
-// Learn folds in a realised show/no-show via one SGD step on the log-loss.
+// Learn folds in a realised show/no-show: one SGD step on the base logistic, then
+// one on the Platt calibrator (lightly regularised toward the identity so it stays
+// a no-op until enough outcomes justify a correction).
 func (p *Predictor) Learn(a Appt, showed bool) {
 	x := showFeatures(a)
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	pred := p.predict(x)
+	z := p.rawLogit(x)
 	y := boolf(showed)
-	err := pred - y
+	err := mathx.Sigmoid(z) - y
 	for i := range p.w {
 		p.w[i] -= p.lr * (err*x[i] + 1e-4*p.w[i])
 	}
 	p.b -= p.lr * err
+	// Online Platt calibration on the raw logit z, regularised toward (calA=1, calB=0).
+	ec := p.calibrated(z) - y
+	p.calA -= p.calLR * (ec*z + 1e-3*(p.calA-1))
+	p.calB -= p.calLR * (ec + 1e-3*p.calB)
 	p.seen++
 }
 
@@ -105,6 +128,8 @@ type State struct {
 	W    []float64 `json:"w"`
 	B    float64   `json:"b"`
 	Seen int       `json:"seen"`
+	CalA float64   `json:"calA,omitempty"`
+	CalB float64   `json:"calB,omitempty"`
 }
 
 // Export returns a copy of the learned state.
@@ -113,7 +138,7 @@ func (p *Predictor) Export() State {
 	defer p.mu.RUnlock()
 	w := make([]float64, len(p.w))
 	copy(w, p.w)
-	return State{W: w, B: p.b, Seen: p.seen}
+	return State{W: w, B: p.b, Seen: p.seen, CalA: p.calA, CalB: p.calB}
 }
 
 // Import restores learned state (e.g. on startup). Ignores dimension mismatch.
@@ -124,6 +149,12 @@ func (p *Predictor) Import(s State) {
 		copy(p.w, s.W)
 		p.b = s.B
 		p.seen = s.Seen
+	}
+	// Older snapshots carry no calibration (both zero) → keep the identity set in
+	// NewPredictor. A real calibrator always has calA≈1 (non-zero), so this is safe.
+	if s.CalA != 0 || s.CalB != 0 {
+		p.calA = s.CalA
+		p.calB = s.CalB
 	}
 }
 

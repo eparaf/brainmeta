@@ -26,7 +26,11 @@ import (
 	"disci/brain/internal/datasource"
 )
 
-const apiVersion = "v18"
+// apiVersion is the Google Ads REST API version. Google sunsets versions ~yearly;
+// bump this to a currently-supported one (v22/v23/v24 as of mid-2026). The
+// endpoints we use (listAccessibleCustomers, searchStream, *:mutate,
+// generateKeywordIdeas) are stable across versions.
+const apiVersion = "v22"
 
 // Client talks to the Google Ads REST API on behalf of ONE clinic/customer.
 type Client struct {
@@ -118,9 +122,17 @@ func (c *Client) http() *http.Client {
 	return http.DefaultClient
 }
 
-// post issues an authenticated POST to a customer-scoped endpoint and decodes the
-// JSON body into out.
+// post issues an authenticated POST to a customer-scoped sub-resource endpoint
+// (customers/{cid}/{endpoint}) and decodes the JSON body into out.
 func (c *Client) post(ctx context.Context, endpoint string, payload, out any) error {
+	return c.postPath(ctx, fmt.Sprintf("customers/%s/%s", c.CustomerID, endpoint), payload, out)
+}
+
+// postPath issues an authenticated POST to an arbitrary API path (after the
+// version segment) and decodes the JSON body into out. Lets callers use the
+// colon-on-resource form (e.g. customers/{cid}:generateKeywordIdeas) that isn't a
+// sub-resource.
+func (c *Client) postPath(ctx context.Context, path string, payload, out any) error {
 	tok, err := c.accessToken(ctx)
 	if err != nil {
 		return err
@@ -131,7 +143,7 @@ func (c *Client) post(ctx context.Context, endpoint string, payload, out any) er
 			return err
 		}
 	}
-	u := fmt.Sprintf("https://googleads.googleapis.com/%s/customers/%s/%s", apiVersion, c.CustomerID, endpoint)
+	u := fmt.Sprintf("https://googleads.googleapis.com/%s/%s", apiVersion, path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &buf)
 	if err != nil {
 		return err
@@ -149,7 +161,7 @@ func (c *Client) post(ctx context.Context, endpoint string, payload, out any) er
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("google ads %s %d: %s", endpoint, resp.StatusCode, truncate(string(body), 600))
+		return fmt.Errorf("google ads %s %d: %s", path, resp.StatusCode, truncate(string(body), 600))
 	}
 	if out == nil {
 		return nil
@@ -169,8 +181,10 @@ func truncate(s string, n int) string {
 // gaqlResult is one row of a searchStream response (only the fields we read).
 type gaqlResult struct {
 	Campaign struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+		Status       string `json:"status"`
+		ResourceName string `json:"resourceName"`
 	} `json:"campaign"`
 	AdGroup struct {
 		ID   string `json:"id"`
@@ -178,6 +192,7 @@ type gaqlResult struct {
 	} `json:"adGroup"`
 	CampaignBudget struct {
 		ResourceName string `json:"resourceName"`
+		AmountMicros string `json:"amountMicros"`
 	} `json:"campaignBudget"`
 	Metrics struct {
 		CostMicros  string  `json:"costMicros"`

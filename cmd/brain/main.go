@@ -61,8 +61,12 @@ func main() {
 		runScenario()
 	case "google-oauth":
 		runGoogleOAuth()
+	case "google-ads-test":
+		runGoogleAdsTest()
+	case "compare":
+		runCompare()
 	default:
-		fmt.Println("usage: brain [sim|chat|serve|scenario|google-oauth]")
+		fmt.Println("usage: brain [sim|chat|serve|scenario|google-oauth|google-ads-test|compare]")
 		os.Exit(1)
 	}
 }
@@ -191,6 +195,10 @@ func seedAdmin(st store.Store, eng *engine.Engine) {
 	pass := envOr("BRAIN_ADMIN_PASSWORD", "admin1234")
 	if _, ok := st.GetUserByEmail(email); ok {
 		return // already seeded (e.g. persisted in Postgres)
+	}
+	// Never seed the well-known default password when auth is enforced.
+	if pass == "admin1234" && strings.EqualFold(os.Getenv("BRAIN_REQUIRE_AUTH"), "true") {
+		log.Fatal("auth: refusing to seed the DEFAULT admin password with BRAIN_REQUIRE_AUTH=true — set BRAIN_ADMIN_PASSWORD")
 	}
 	hash, err := auth.HashPassword(pass)
 	if err != nil {
@@ -385,8 +393,15 @@ func runServe() {
 	// Dashboard auth (JWT for the Next.js panel). Secret from BRAIN_JWT_SECRET; if
 	// empty, a random per-process secret is generated (dev — tokens invalidate on
 	// restart). TTL from BRAIN_JWT_TTL (default 24h).
+	// Production readiness gate: when auth is enforced, insecure defaults must not
+	// silently pass. Computed once here and reused for the middleware below.
+	requireAuth := strings.EqualFold(os.Getenv("BRAIN_REQUIRE_AUTH"), "true")
+
 	jwtSecret := []byte(os.Getenv("BRAIN_JWT_SECRET"))
 	if len(jwtSecret) == 0 {
+		if requireAuth {
+			log.Fatal("auth: BRAIN_REQUIRE_AUTH=true requires a stable BRAIN_JWT_SECRET — refusing to start with a throwaway secret")
+		}
 		jwtSecret = make([]byte, 32)
 		_, _ = rand.Read(jwtSecret)
 		log.Println("auth: BRAIN_JWT_SECRET unset — using a random per-process secret (tokens invalidate on restart)")
@@ -448,6 +463,19 @@ func runServe() {
 		go rem.Run(context.Background(), 5*time.Minute)
 	}
 
+	// Live Keyword Planner for /v1/scenario: when Google Ads creds + a refresh token
+	// are present, the scenario engine forecasts on REAL search-volume/CPC data
+	// instead of cold-start priors. Read-only (KeywordPlanIdeaService) — no spend.
+	if refresh := os.Getenv("GOOGLE_ADS_REFRESH_TOKEN"); refresh != "" &&
+		os.Getenv("GOOGLE_ADS_DEVELOPER_TOKEN") != "" && os.Getenv("GOOGLE_CLIENT_ID") != "" {
+		kc := googleads.New(
+			os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"), refresh,
+			os.Getenv("GOOGLE_ADS_DEVELOPER_TOKEN"), os.Getenv("GOOGLE_ADS_CUSTOMER_ID"),
+			os.Getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID"))
+		server.SetKeywordSource(googleads.LiveKeywordSource{Client: kc})
+		log.Println("scenario: live Google Ads Keyword Planner wired")
+	}
+
 	addr := os.Getenv("BRAIN_ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -456,7 +484,6 @@ func runServe() {
 	// Auth gate is ALWAYS installed: it injects the user/clinic scope from a JWT
 	// when present. Enforcement turns on with BRAIN_REQUIRE_AUTH=true or a set
 	// BRAIN_API_KEY; otherwise /v1/* is dev-open (embedded console keeps working).
-	requireAuth := strings.EqualFold(os.Getenv("BRAIN_REQUIRE_AUTH"), "true")
 	apiKey := os.Getenv("BRAIN_API_KEY")
 	handler = authn.Middleware(apiKey, requireAuth, auth.ProtectV1)(handler)
 	switch {

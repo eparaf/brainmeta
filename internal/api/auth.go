@@ -62,11 +62,17 @@ func newID() string {
 	return hex.EncodeToString(b)
 }
 
-// handleRegister creates an account. Admin-only when authenticated; in dev-open
-// mode (no user in ctx) it is allowed so the first admin can bootstrap — though the
-// seeded admin (cmd/brain) is the normal path.
+// handleRegister creates an account. ADMIN-ONLY, always. The bootstrap admin is
+// seeded at startup (cmd/brain seedAdmin) and logs in to mint a token, so there is
+// no unauthenticated registration path — an open one would let anyone create an
+// admin (privilege escalation), which in dev-open mode was previously possible.
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
-	if u, ok := auth.UserFrom(r.Context()); ok && u != nil && u.Role != domain.RoleAdmin {
+	u, ok := auth.UserFrom(r.Context())
+	if !ok || u == nil {
+		writeJSON(w, 401, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if u.Role != domain.RoleAdmin {
 		writeJSON(w, 403, map[string]string{"error": "forbidden"})
 		return
 	}

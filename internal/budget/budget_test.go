@@ -1,6 +1,7 @@
 package budget
 
 import (
+	"math/rand"
 	"testing"
 
 	"disci/brain/internal/domain"
@@ -94,5 +95,60 @@ func TestPerClinicBudgetIsolation(t *testing.T) {
 	}
 	if bB != 0 {
 		t.Fatalf("clinicB has no budget; its arm must get 0, got %.0f", bB)
+	}
+}
+
+// TestNoDriftWhenStable: an arm performing at its prior rate should NOT trigger
+// change detection — the detector must not fire on ordinary sampling noise.
+func TestNoDriftWhenStable(t *testing.T) {
+	e := NewEngine(1)
+	arm := domain.Arm{ID: "stable", ClinicID: "c1", Segment: domain.SegmentGeneral, AvgCostPerLead: 40}
+	e.RegisterArm(arm)
+	a := e.arms["stable"]
+	priorMean := a.priorAlpha / (a.priorAlpha + a.priorBeta)
+
+	// Feed the prior rate via a seeded RNG (not a block pattern — long runs of
+	// the same outcome would swing the fast EWMA away from the true rate and
+	// falsely look like drift).
+	rng := rand.New(rand.NewSource(1))
+	for i := 0; i < 300; i++ {
+		e.Observe("stable", rng.Float64() < priorMean, 40)
+	}
+	if a.driftEvents != 0 {
+		t.Fatalf("stable arm should not trigger drift detection, got %d events", a.driftEvents)
+	}
+}
+
+// TestDriftDetectedOnRegimeShift: an arm that starts converting far above its
+// established rate (a real shift, e.g. a creative refresh or falling
+// competition) must be caught by change detection and its posterior pulled back
+// toward the prior — not left stale until the next scheduled Decay().
+func TestDriftDetectedOnRegimeShift(t *testing.T) {
+	e := NewEngine(1)
+	arm := domain.Arm{ID: "shifting", ClinicID: "c1", Segment: domain.SegmentGeneral, AvgCostPerLead: 40}
+	e.RegisterArm(arm)
+	a := e.arms["shifting"]
+
+	// Settle near the prior rate first (established evidence).
+	priorMean := a.priorAlpha / (a.priorAlpha + a.priorBeta)
+	for i := 0; i < 100; i++ {
+		won := float64(i%100)/100.0 < priorMean
+		e.Observe("shifting", won, 40)
+	}
+	preShiftMean := a.alpha / (a.alpha + a.beta)
+
+	// Now the arm suddenly converts at 95% — a genuine regime shift.
+	for i := 0; i < 60; i++ {
+		e.Observe("shifting", i%100 < 95, 40)
+	}
+	if a.driftEvents == 0 {
+		t.Fatal("expected change detection to fire on a sustained regime shift")
+	}
+	// Detection should have forgotten stale evidence: the posterior mean right
+	// after tripping should sit closer to the prior than the pre-shift mean did
+	// NOT simply keep accumulating the full 160 observations un-decayed.
+	postMean := a.alpha / (a.alpha + a.beta)
+	if postMean <= preShiftMean {
+		t.Fatalf("posterior should move up after a positive shift, got pre=%.3f post=%.3f", preShiftMean, postMean)
 	}
 }

@@ -10,6 +10,11 @@ import (
 	"disci/brain/internal/scenario"
 )
 
+// SetKeywordSource wires a live keyword source (e.g. Google Ads Keyword Planner)
+// so /v1/scenario forecasts on real search-volume/CPC data instead of cold-start
+// priors. Call before serving; nil keeps the synthetic PriorKeywordSource.
+func (s *Server) SetKeywordSource(src scenario.KeywordSource) { s.keywords = src }
+
 // handleScenario forecasts appointments for a hypothetical ad plan — the offline
 // "with this budget, how many appointments per month?" what-if. It spends no money
 // and calls no LLM; the math is the Monte-Carlo scenario engine over the funnel
@@ -49,7 +54,7 @@ func (s *Server) handleScenario(w http.ResponseWriter, r *http.Request) {
 			plan.Audience = priors.AudienceTourism
 		}
 	}
-	res, err := scenario.New(nil).Simulate(plan)
+	res, err := scenario.New(s.keywords).Simulate(plan)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

@@ -37,14 +37,16 @@ Bunu `brain.env`'e **`GOOGLE_ADS_REFRESH_TOKEN=`** olarak yaz.
 - Manager (test_disci) içinde → Hesaplar → yeni **test hesabı** oluştur.
 - 10 haneli **customer id**'sini not al (kampanyalar burada kurulacak; sıfır harcama).
 
-### 4. Kampanya oluştur/oku kodu (Faz B — yazılacak)
-`internal/googleads` zaten OAuth + GAQL searchStream + budget mutate + conversions
-içeriyor. Eklenecek:
-- **Keyword Planner** (`KeywordPlanIdeaService`) → `scenario.KeywordSource`'un canlı
-  implementasyonu. Böylece senaryo motoru sentetik yerine gerçek arama hacmi/CPC kullanır.
-- **Kampanya oluştur/oku** (`campaigns:mutate`, `campaignBudgets:mutate`) — test
-  hesabında. Segment default keyword'lerle başlar (web-site seed sonra).
-- `datasource` deseni korunur: aynı interface, gerçek/fake takas.
+### 4. Kampanya oluştur/oku kodu (Faz B — YAPILDI, canlı run token bekliyor)
+`internal/googleads/campaigns.go` eklendi (fake HTTP transport ile test edildi):
+- **`GenerateKeywordIdeas`** (`KeywordPlanIdeaService`) → `scenario.KeywordMetrics` (TRY).
+- **`LiveKeywordSource`** — `scenario.KeywordSource`'u uygular; `/v1/scenario` creds
+  varken gerçek arama hacmi/CPC kullanır (main.go'da wire edildi).
+- **`CreateSearchCampaign`** (PAUSED, Search, kendi bütçesi) + **`ListCampaigns`** —
+  test hesabında, sıfır harcama.
+- **CLI:** `go run ./cmd/brain google-ads-test` → erişilebilir hesap → keyword çek →
+  PAUSED kampanya oluştur → oku. (Adım 2'deki refresh token gelince çalışır.)
+- Web-site seed keyword'ü sonraya bırakıldı (segment default ile başlandı).
 
 ### 5. Panel kartı (opsiyonel)
 `nextjs-web`'de "Senaryo / Fizibilite" sayfası → `/v1/scenario`'ya bağlan, X–Y

@@ -47,6 +47,20 @@ type armState struct {
 	leadsDelivered int
 	apptsWon       int
 	spend          float64 // cumulative spend this period
+
+	// Change detection (non-stationarity): the periodic Decay() call forgets
+	// evidence for EVERY arm on a fixed schedule, but ad markets drift arm-by-arm
+	// (one creative fatigues, a competitor enters one segment) — waiting for the
+	// next scheduled decay reacts too slowly for the arm that actually shifted.
+	// window is a fixed-size sliding window (literature: sliding-window /ADWIN-
+	// style detectors for non-stationary bandits) of the most recent outcomes; its
+	// rate is compared to the slow Beta posterior mean via a binomial z-test, so
+	// the trip threshold scales correctly with sample size instead of being a bare
+	// probability gap that's either too twitchy or too numb.
+	window      []bool
+	windowSum   int
+	windowPos   int
+	driftEvents int
 }
 
 // valueWeight is the expected margin (TRY) per qualified appointment for the
@@ -78,6 +92,21 @@ type Allocation struct {
 	ExpectedAppts float64
 	SLABias       float64
 }
+
+// Change-detection tuning. driftWindow is the sliding-window size the rolling
+// win-rate is computed over; the test runs once per FULL window's worth of new
+// evidence (not on every single observation — testing every step is a multiple-
+// testing trap that all but guarantees a false trip over a long stable run).
+// driftZThreshold is a binomial z-score cutoff against the SLOW posterior mean:
+// at 3.0 a stable arm trips roughly 0.3% of the time PER CHECK. driftDecay pulls
+// the posterior most of the way back to the prior on trip (0=full reset, 1=no-op)
+// — more aggressive than the periodic Decay() gamma since a detected shift means
+// the old evidence is actively wrong, not just aging.
+const (
+	driftWindow     = 30
+	driftZThreshold = 3.0
+	driftDecay      = 0.3
+)
 
 // Engine is the budget allocator. Safe for concurrent use.
 type Engine struct {
@@ -178,6 +207,50 @@ func (e *Engine) Observe(armID string, won bool, costPaid float64) {
 			a.cpl = e.cplAlpha*costPaid + (1-e.cplAlpha)*a.cpl
 		}
 	}
+	e.checkDrift(a, won)
+}
+
+// checkDrift maintains a fixed-size sliding window of recent outcomes and, once
+// full, tests its win rate against the slow Beta posterior mean with a binomial
+// z-test. A significant gap means the arm's true performance has likely shifted
+// (non-stationarity) — decay that arm's posterior toward its prior immediately
+// rather than waiting for the next scheduled Decay() call. The window is cleared
+// on a trip so a single shift can't retrigger every subsequent observation.
+// Caller holds e.mu.
+func (e *Engine) checkDrift(a *armState, won bool) {
+	idx := a.windowPos % driftWindow
+	if len(a.window) < driftWindow {
+		a.window = append(a.window, won)
+	} else {
+		if a.window[idx] {
+			a.windowSum--
+		}
+		a.window[idx] = won
+	}
+	if won {
+		a.windowSum++
+	}
+	a.windowPos++
+	if a.windowPos < driftWindow || a.windowPos%driftWindow != 0 {
+		return // test once per full window's worth of fresh evidence, not every step
+	}
+	rate := float64(a.windowSum) / float64(driftWindow)
+	postMean := a.alpha / (a.alpha + a.beta)
+	se := math.Sqrt(postMean * (1 - postMean) / float64(driftWindow))
+	if se <= 0 {
+		return
+	}
+	z := (rate - postMean) / se
+	if math.Abs(z) < driftZThreshold {
+		return
+	}
+	a.alpha = a.priorAlpha + driftDecay*(a.alpha-a.priorAlpha)
+	a.beta = a.priorBeta + driftDecay*(a.beta-a.priorBeta)
+	a.driftEvents++
+	// Require fresh evidence before the next test so one shift doesn't retrigger.
+	a.windowSum = 0
+	a.windowPos = 0
+	a.window = a.window[:0]
 }
 
 // CorrectCPL overrides an arm's learned cost-per-lead with ground truth pulled
@@ -219,16 +292,29 @@ func (e *Engine) Allocate(clinicDaily map[string]float64, sla SLAProvider) ([]Al
 		sla = noBias{}
 	}
 
-	// Group arms by clinic.
+	// Group arms by clinic. Both the clinic and per-clinic arm order below are
+	// sorted by ID rather than ranged over directly: Go randomises map iteration
+	// order, and since e.rng's Thompson draws are consumed sequentially in
+	// whatever order arms are visited, an unsorted range makes two calls with
+	// identical state sample DIFFERENT thetas per arm — a real reproducibility
+	// bug for offline replay/comparison (repo rule: seeded RNG must be
+	// deterministic), not just cosmetic.
 	byClinic := map[string][]*armState{}
 	for _, a := range e.arms {
 		byClinic[a.arm.ClinicID] = append(byClinic[a.arm.ClinicID], a)
 	}
+	clinicIDs := make([]string, 0, len(byClinic))
+	for cid, arms := range byClinic {
+		sort.Slice(arms, func(i, j int) bool { return arms[i].arm.ID < arms[j].arm.ID })
+		clinicIDs = append(clinicIDs, cid)
+	}
+	sort.Strings(clinicIDs)
 
 	allocs := make([]Allocation, 0, len(e.arms))
 	var lambdaNum, lambdaDen float64
 
-	for clinicID, arms := range byClinic {
+	for _, clinicID := range clinicIDs {
+		arms := byClinic[clinicID]
 		budget := clinicDaily[clinicID]
 		bias := sla.BudgetBias(clinicID)
 
@@ -378,14 +464,15 @@ func (e *Engine) Snapshot() []map[string]any {
 	out := make([]map[string]any, 0, len(e.arms))
 	for _, a := range e.arms {
 		out = append(out, map[string]any{
-			"armId":    a.arm.ID,
-			"clinicId": a.arm.ClinicID,
-			"segment":  a.arm.Segment,
-			"thetaHat": mathx.BetaMean(a.alpha, a.beta),
-			"cpl":      round2(a.cpl),
-			"leads":    a.leadsDelivered,
-			"appts":    a.apptsWon,
-			"spend":    round2(a.spend),
+			"armId":       a.arm.ID,
+			"clinicId":    a.arm.ClinicID,
+			"segment":     a.arm.Segment,
+			"thetaHat":    mathx.BetaMean(a.alpha, a.beta),
+			"cpl":         round2(a.cpl),
+			"leads":       a.leadsDelivered,
+			"appts":       a.apptsWon,
+			"spend":       round2(a.spend),
+			"driftEvents": a.driftEvents,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

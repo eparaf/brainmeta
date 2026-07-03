@@ -59,6 +59,19 @@ var keywordSeeds = map[domain.Segment][]string{
 	domain.SegmentGeneral:   {"diş hekimi", "diş kontrolü", "diş temizliği fiyat"},
 }
 
+// SeedKeywords returns the representative query stems for a segment. Exported so a
+// live keyword source (e.g. googleads Keyword Planner) can seed real search-volume
+// lookups with the same terms the cold-start source uses.
+func SeedKeywords(seg domain.Segment) []string {
+	seeds := keywordSeeds[seg]
+	if len(seeds) == 0 {
+		seeds = keywordSeeds[domain.SegmentGeneral]
+	}
+	out := make([]string, len(seeds))
+	copy(out, seeds)
+	return out
+}
+
 // Keywords synthesises a keyword set for the segment. Volume is split across the
 // segment's seed terms; CPC low/high bracket the priors central CPC.
 func (p PriorKeywordSource) Keywords(seg domain.Segment, aud priors.Audience) ([]KeywordMetrics, error) {
