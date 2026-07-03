@@ -275,6 +275,29 @@ type noBias struct{}
 
 func (noBias) BudgetBias(string) float64 { return 1 }
 
+// thompsonMCSamples is how many Beta draws Allocate averages into a single
+// per-arm efficiency estimate for one planning cycle, instead of using a single
+// raw sample. A single draw combined with the greedy "fund the top arm fully
+// before the next" water-fill below is high-variance: an unlucky draw can rank
+// the WORSE arm first and hand it the clinic's entire daily budget for that
+// cycle (measured via internal/sim's CompareBanditVsManual — see
+// docs/DURUM-RAPORU.md). Averaging N draws cuts that ranking noise roughly
+// √N-fold while still preserving Thompson-style stochastic exploration (the
+// average still shifts cycle to cycle as the posterior updates and still
+// favours less-certain arms somewhat, just without the single-draw whiplash).
+const thompsonMCSamples = 20
+
+// avgSampleBeta averages n draws from Beta(alpha, beta) — a lower-variance
+// per-cycle efficiency estimate than a single SampleBeta call (see
+// thompsonMCSamples).
+func avgSampleBeta(rng *rand.Rand, alpha, beta float64, n int) float64 {
+	sum := 0.0
+	for i := 0; i < n; i++ {
+		sum += mathx.SampleBeta(rng, alpha, beta)
+	}
+	return sum / float64(n)
+}
+
 // Allocate runs one planning cycle. Budgets are PER-CLINIC: in the passthrough
 // model each clinic funds its own ad budget, so clinic A's money can never be
 // spent on clinic B. Within each clinic's daily budget we Thompson-sample and
@@ -325,7 +348,7 @@ func (e *Engine) Allocate(clinicDaily map[string]float64, sla SLAProvider) ([]Al
 		}
 		scoredArms := make([]scored, 0, len(arms))
 		for _, a := range arms {
-			theta := mathx.SampleBeta(e.rng, a.alpha, a.beta)
+			theta := avgSampleBeta(e.rng, a.alpha, a.beta, thompsonMCSamples)
 			cpl := a.cpl
 			if cpl <= 0 {
 				cpl = 50

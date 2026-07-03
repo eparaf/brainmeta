@@ -578,6 +578,16 @@ func runServe() {
 		}
 	}
 
+	// Realised outcomes (show/no-show/closed) are NOT auto-pulled: datasource.
+	// ClinicPMS is a generic interface, but there is no single real-world practice-
+	// management system to integrate against (every clinic uses different
+	// software) — a fake/mock PMS adapter would silently teach the flywheel on
+	// invented data, which is worse than no automation. Until a specific clinic's
+	// PMS adapter is wired in (implement datasource.ClinicPMS and pass it as
+	// SyncService.PMS above), outcomes must be reported via the dedup-safe
+	// POST /v1/outcomes (e.g. clinic staff marking a result in the panel).
+	log.Println("outcomes: no PMS wired — report realised show/close via POST /v1/outcomes (panel or API)")
+
 	// Periodic snapshot saver (every 60s) + weekly posterior decay.
 	go func() {
 		t := time.NewTicker(60 * time.Second)

@@ -90,6 +90,7 @@ go run ./cmd/brain google-oauth     # Google Ads refresh token üret (bir kez lo
 go run ./cmd/brain google-ads-test  # test hesabında keyword+kampanya uçtan uca (sıfır harcama)
 go run ./cmd/brain compare          # bandit vs manuel ROAS — canlıya çıkmadan doğrulama
 go test ./...                       # tüm testler
+DATABASE_URL=... go test -tags pgx ./internal/store/...  # Postgres entegrasyon testleri (gerçek DB)
 ```
 UI: `cd ui && npm install && npm run dev` (Vite+React, BACKEND_URL ile backend'e bağlanır).
 Panel: `cd nextjs-web && npm run dev` (Next.js, :3002). Takvim modülü: `/calendar` (slug İngilizce).
@@ -120,9 +121,11 @@ tipi önerilir — Web tipinde `http://127.0.0.1:8765/` redirect'i eklenmeli),
 ## Durum & yol haritası
 Güncel tamamlanmışlık + öncelikli to-do listesi: **`docs/DURUM-RAPORU.md`**. Özet:
 - **Bitti:** P0 auth sertleştirme (privilege-escalation kapatıldı, prod guard'lar), senaryo motoru
-  (Faz A+B), no-show Platt kalibrasyonu, bandit change-detection + offline-replay harness.
-- **Sırada (P1):** bandit ROAS açığının kök nedeni (bkz. kural 15), Postgres'i default persistence
-  yapmak, canlı outcome/PMS loop'unu bağlamak, API clinic-scoping test kapsamını genişletmek.
+  (Faz A+B), no-show Platt kalibrasyonu, bandit change-detection + offline-replay harness, bandit
+  varyans azaltma (avgSampleBeta), Postgres store'un gerçek DB'ye karşı testi (9 entegrasyon testi
+  + CI'de Postgres service container — `Dockerfile`/`docker-compose.yml` zaten `-tags pgx redis`
+  ile prod default'tu, eksik olan test kapsamıydı).
+- **Sırada (P1):** canlı outcome/PMS loop'unu bağlamak, API clinic-scoping test kapsamını genişletmek.
 - **Sonra (P2):** per-clinic **Connection store** (UI'dan Meta/WhatsApp/Google bağlama) + Meta
   Embedded Signup OAuth (resolver + tablo + onboarding), Meta Lead Ads webhook'unu tamamlamak,
   LLM tool-calling'i text-agent'a bağlamak, 3 frontend'i tekilleştirmek (`front/` arşivlenecek).

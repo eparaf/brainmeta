@@ -8,6 +8,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: brain
+          POSTGRES_PASSWORD: brain
+          POSTGRES_DB: brain
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U brain"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -26,6 +40,11 @@ jobs:
 
       - name: Build (production tags)
         run: go build -tags "pgx redis" ./cmd/brain
+
+      - name: Test Postgres store (real DB, -tags pgx)
+        env:
+          DATABASE_URL: postgres://brain:brain@localhost:5432/brain?sslmode=disable
+        run: go test -tags pgx -race -timeout 120s ./internal/store/...
 
   lint:
     runs-on: ubuntu-latest

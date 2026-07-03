@@ -152,3 +152,43 @@ func TestDriftDetectedOnRegimeShift(t *testing.T) {
 		t.Fatalf("posterior should move up after a positive shift, got pre=%.3f post=%.3f", preShiftMean, postMean)
 	}
 }
+
+// TestAvgSampleBetaReducesVariance confirms averaging N Beta draws (used by
+// Allocate to rank arms) actually cuts variance relative to a single draw — the
+// whole point of the fix (see docs/DURUM-RAPORU.md: a single noisy draw combined
+// with greedy water-filling could hand an entire day's clinic budget to the
+// wrong arm). Variance should shrink roughly proportional to 1/N.
+func TestAvgSampleBetaReducesVariance(t *testing.T) {
+	rng := rand.New(rand.NewSource(1))
+	alpha, beta := 3.0, 7.0 // a moderately uncertain posterior
+
+	varOf := func(n, trials int) float64 {
+		samples := make([]float64, trials)
+		for i := range samples {
+			samples[i] = avgSampleBeta(rng, alpha, beta, n)
+		}
+		mean := 0.0
+		for _, s := range samples {
+			mean += s
+		}
+		mean /= float64(trials)
+		v := 0.0
+		for _, s := range samples {
+			v += (s - mean) * (s - mean)
+		}
+		return v / float64(trials)
+	}
+
+	v1 := varOf(1, 2000)
+	vN := varOf(thompsonMCSamples, 2000)
+	if vN >= v1 {
+		t.Fatalf("averaging %d draws should reduce variance vs a single draw: v1=%.5f vN=%.5f",
+			thompsonMCSamples, v1, vN)
+	}
+	// Should be in the right ballpark of the theoretical 1/N reduction, not just
+	// marginally smaller (guards against a no-op refactor accidentally passing).
+	if vN > v1/float64(thompsonMCSamples)*2 {
+		t.Fatalf("variance reduction weaker than expected: v1=%.5f vN=%.5f (want ~v1/%d)",
+			v1, vN, thompsonMCSamples)
+	}
+}

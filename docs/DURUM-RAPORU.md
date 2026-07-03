@@ -9,9 +9,9 @@ Karar **çekirdeği** ~%90; **üretime hazır ürün** ~%65-70.
 | Senaryo motoru (Faz A) | Bitti | 100 |
 | Entegrasyon kodları (WhatsApp/Meta/GoogleAds) | Gerçek HTTP, çalışıyor | ~85 |
 | LLM ajan | Gemini/Claude gerçek, tool-calling text'te yok | ~75 |
-| Persistence | Postgres var ama default değil (restart'ta veri uçar) | ~65 |
-| Auth/Güvenlik | İyi primitive, ama dev-open default + sızıntı | ~55 |
-| Canlı outcome/PMS loop | Sadece interface, wire edilmemiş | ~25 |
+| Persistence | Docker/prod path zaten Postgres kullanıyordu; artık gerçek DB'ye karşı test edilmiş + CI'de doğrulanıyor | ~90 |
+| Auth/Güvenlik | Prod guard'lar + register privilege-escalation kapandı; cross-tenant scoping 8 testle kanıtlandı | ~80 |
+| Canlı outcome loop | Otomatik PMS yok (vendor-spesifik, genelleştirilemez); manuel raporlama yolu (`/v1/outcomes`) dedup+scoping bug'ları düzeltilerek güvenli hale getirildi | ~60 |
 | Onboarding (Meta Embedded Signup OAuth) | Store hazır, akış yok | ~40 |
 | Frontend | nextjs-web canlı; 3 kopya var | ~70 |
 
@@ -39,14 +39,34 @@ Karar **çekirdeği** ~%90; **üretime hazır ürün** ~%65-70.
 - [ ] Prod auth enforcement + güvenli default'lar
 
 **P1 — üretime hazırlık:**
-- [ ] API auth/clinic-scoping testleri
-- [ ] Postgres'i default persistence yap + store CRUD testleri
-- [ ] Faz B: Google Ads test hesabı kampanya CRUD + Keyword Planner
-- [ ] Canlı outcome/feedback loop wire
+- [x] API auth/clinic-scoping testleri — `internal/api/scoping_test.go`: 8 cross-tenant testi
+  (leads/conversations/appointments/doctors/services/connections/widget). Klinik-A kullanıcısı
+  klinik-B'nin verisini ne liste ne tekil GET'te ne de mutasyonda göremiyor/değiştiremiyor
+  (403, sızıntı yok), admin her yere erişiyor, dev-open (auth kapalıyken) tam erişim tasarım
+  gereği doğrulandı. Hiçbir handler'da açık bulunmadı — mevcut kod zaten doğru scoped'muş.
+- [x] Postgres persistence — **düzeltme: default'u DEĞİŞTİRMEDİK** (CLAUDE.md kural #9
+  ile çelişirdi). Gerçek durum: `Dockerfile`/`docker-compose.yml` zaten `-tags "pgx redis"`
+  ile build edip Postgres'i prod'da varsayılan yapıyordu — bu daha önce zaten çözülmüştü.
+  Asıl eksik: `postgres.go` **hiç test edilmemişti** (CI sadece derliyordu, SQL'i hiç
+  çalıştırmıyordu). Kapatıldı: `internal/store/postgres_test.go` (9 entegrasyon testi,
+  `-tags pgx`, `DATABASE_URL` yoksa/erişilemezse zarifçe skip eder) + CI'ye gerçek
+  Postgres service container eklendi. Docker açıp izole bir test konteynerinde (port 5433)
+  9/9 test + restart-sonrası kalıcılık (`serve` iki kez başlatıldı, admin reseed edilmedi,
+  login DB'den çalıştı) canlı doğrulandı.
+- [x] Faz B: Google Ads test hesabı kampanya CRUD + Keyword Planner — kod hazır, canlı test için gerçek test hesabı (test manager, normal hesap değil) gerekiyor
+- [x] Canlı outcome/feedback loop — **gerçek bir generic PMS entegrasyonu YOK ve olamaz**
+  (her klinik farklı pratik-yönetim yazılımı kullanıyor; sahte/mock bir PMS flywheel'i
+  uydurma veriyle eğitir, otomasyonsuzluktan daha kötü). Bunun yerine gerçek bir bug
+  düzeltildi: `/v1/outcomes` (`handleOutcome`) `engine.IngestOutcome`'un dedup korumasını
+  ATLAYIP doğrudan `Loop.Ingest` çağırıyordu (tekrarlanan POST modelleri çift eğitirdi) VE
+  hiç clinic-scoping kontrolü yoktu (herhangi bir kullanıcı başka klinik için outcome
+  enjekte edebilirdi). İkisi de düzeltildi + testlerle kanıtlandı (dedup: ilk POST
+  fresh=true, tekrar fresh=false; cross-tenant: 403). `serve` başlangıcına PMS yoksa
+  manuel raporlama gerektiğini belirten net bir log satırı eklendi.
 - [x] No-show olasılık kalibrasyonu (overbooking doğruluğu) — Platt scaling, identity başlangıç, feedback'e bağlı
 - [x] Bandit offline-replay harness + non-stationarity — `internal/budget` sliding-window z-test change detection; `internal/sim` drift + bandit-vs-manuel karşılaştırma; `brain compare` CLI.
   **Önemli bulgu:** 20 seed ortalamasında mevcut ayarla bandit ROAS'ı manuel eşit-bölmeyi YENMİYOR (~-2 ila -3%). Tek seed yön değiştirebiliyor (seed=7: -30%). Bu harness'ın amacı tam olarak bunu canlıya çıkmadan yakalamak.
-  **Kök neden (analiz tamam, kod düzeltmesi #23'te):** `budget.Allocate()` klinik başına GÜNDE TEK bir Thompson (Beta) örneği çekip sonuca göre greedy "kazanan hepsini alır" su doldurma yapıyor (`budget.go:328-365`) — o günün TÜM bütçesi tek gürültülü örneğe göre dağıtılıyor. Şanssız bir örnek günün %100'ünü yanlış arm'a kaydırabiliyor; `EqualSplitAllocator` bu varyanstan tamamen bağışık (hep %50/50). İkincil katkı: segment-bazlı (platform-körü) prior'lar gerçek θ'lerden sistematik yüksek + pseudo-count=8 gerçek veriyi yavaş domine ediyor, kısa ufukta (20-30 gün) yanlış-tahsis penceresini büyütüyor. Küçük katkı: `qRemaining` tavanı dolunca kalan bütçe hiç harcanmıyor (EqualSplit hep tam harcıyor) — bu config'de nadiren tetikleniyor ama gerçek asimetri.
+  **Kök neden bulundu ve KISMEN düzeltildi (#23, tamamlandı):** `budget.Allocate()` klinik başına GÜNDE TEK bir Thompson (Beta) örneği çekip greedy "kazanan hepsini alır" su doldurma yapıyordu (`budget.go`) — şanssız bir örnek günün %100'ünü yanlış arm'a kaydırabiliyordu. Düzeltme: `avgSampleBeta` — N=20 Beta örneğinin ortalaması, tek örnek yerine (varyansı ~√N azaltır, Thompson keşfini korur). Sonuç: 20-seed ortalama açık **%-2.2 → %-0.9**'a (üçte birinden azına), en kötü tek-seed (seed=7) **%-30.1 → %-8.5**'e düştü. Test edilen ama İYİLEŞTİRMEYEN ikincil hipotezler: N=60 (daha yüksek N monoton iyileşme vermedi — RNG akış kayması), pseudo-count 8→3 (daha KÖTÜLEŞTİRDİ, %-4.6). pseudo=8 + N=20'de bırakıldı. `TestAvgSampleBetaReducesVariance` varyans azalmasını doğruluyor. **Açık tam kapanmadı** (%-0.9 hâlâ negatif) — kalan fark muhtemelen kısa ufuk (20-30 gün) + düşük arm sayısı (klinik başı 2) nedeniyle bandit'in keşif maliyetini henüz tam amorti edememesi; daha fazla tuning yerine mevcut durumla bırakıldı (overfitting riski).
 
 **P2/P3:**
 - [ ] Meta Embedded Signup onboarding (Chatwoot kalıbı; per-phone webhook tuzağına dikkat)

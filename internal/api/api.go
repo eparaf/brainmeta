@@ -347,6 +347,14 @@ func (s *Server) handleLead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, dec)
 }
 
+// handleOutcome is the manual/live outcome-reporting surface: whether a real PMS
+// sync loop or a clinic staffer marking a result in the panel, every realised
+// outcome (qualified/booked/showed/closed) comes through here. It MUST go
+// through engine.IngestOutcome — not Loop.Ingest directly — so the durable
+// dedup guard applies (a retried or duplicate POST must not double-train the
+// models) and the engine trains on the REAL decision-time features it cached at
+// HandleLead time rather than whatever the caller happens to send. The `features`
+// field is accepted for backward compatibility but ignored for that reason.
 func (s *Server) handleOutcome(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Outcome  domain.Outcome      `json:"outcome"`
@@ -356,8 +364,13 @@ func (s *Server) handleOutcome(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.eng.Loop.Ingest(body.Outcome, body.Features)
-	writeJSON(w, 200, map[string]string{"status": "ingested"})
+	u, _ := auth.UserFrom(r.Context())
+	if body.Outcome.ClinicID != "" && !auth.CanAccessClinic(u, body.Outcome.ClinicID) {
+		writeJSON(w, 403, map[string]string{"error": "forbidden"})
+		return
+	}
+	fresh := s.eng.IngestOutcome(body.Outcome)
+	writeJSON(w, 200, map[string]any{"status": "ingested", "fresh": fresh})
 }
 
 func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
