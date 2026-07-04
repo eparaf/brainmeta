@@ -445,10 +445,36 @@ func runServe() {
 	}
 	server.SetIntegrations(cloud, cons, os.Getenv("META_APP_SECRET"))
 
+	// Meta Lead Ads: fetch the full lead (name/phone) for each webhook leadgen_id.
+	// Needs a token with the leads_retrieval permission — typically a Page token,
+	// distinct from the ad-account token META_TOKEN uses for spend/budget; falls
+	// back to META_TOKEN if no dedicated one is set.
+	if lt := envOr("META_PAGE_TOKEN", os.Getenv("META_TOKEN")); lt != "" {
+		server.SetLeadAds(meta.NewLeadAdsClient(lt))
+		log.Println("meta lead ads: webhook fetches full leads via Graph API")
+	} else {
+		log.Println("meta lead ads: no token configured — leadgen webhook will only ack (set META_PAGE_TOKEN or META_TOKEN)")
+	}
+
 	// FREE browser voice agent is always on at /voice (Web Speech API, no creds).
 	// PAID PSTN voice (Twilio) turns on when a public callback URL is set.
 	if base := os.Getenv("VOICE_PUBLIC_URL"); base != "" {
-		vAgent := &voice.Agent{Tools: agent.NewBrainTools(eng), LLM: voice.MockLLM{}}
+		// Use the SAME real LLM the text agent resolved above (Gemini/Claude/mock) —
+		// via a tool-calling adapter, so voice calls get real function-calling
+		// instead of always falling back to voice.MockLLM regardless of configured
+		// credentials.
+		var toolLLM voice.ToolLLM = voice.MockLLM{}
+		switch v := llm.(type) {
+		case *agent.GeminiLLM:
+			toolLLM = voice.GeminiToolLLM{GeminiLLM: v}
+			log.Println("voice: using Gemini tool-calling")
+		case *agent.ClaudeLLM:
+			toolLLM = voice.ClaudeToolLLM{ClaudeLLM: v}
+			log.Println("voice: using Claude tool-calling")
+		default:
+			log.Println("voice: using mock LLM (matches text agent's mock)")
+		}
+		vAgent := &voice.Agent{Tools: agent.NewBrainTools(eng), LLM: toolLLM}
 		server.SetVoice(voice.NewTwilioHandler(vAgent, base, nil))
 		log.Println("voice: Twilio PSTN webhooks enabled (paid) at /webhooks/voice")
 	} else {

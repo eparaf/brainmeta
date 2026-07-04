@@ -64,6 +64,7 @@ type Server struct {
 	corsOrigins map[string]bool     // allowlist; empty → permissive "*" (dev)
 
 	keywords scenario.KeywordSource // live keyword data for /v1/scenario (nil → cold-start priors)
+	leadAds  leadFetcher            // Meta Lead Ads Graph API fetch (nil → webhook acks only)
 }
 
 // New builds the HTTP server. The agent may be nil (then /v1/whatsapp is off).
@@ -91,6 +92,10 @@ func (s *Server) SetIntegrations(cloud *whatsapp.Cloud, cons *consent.Store, app
 		s.consent = cons
 	}
 }
+
+// SetLeadAds wires the Meta Lead Ads Graph API client; nil leaves the leadgen
+// webhook acking events without fetching the underlying lead (see webhooks.go).
+func (s *Server) SetLeadAds(c leadFetcher) { s.leadAds = c }
 
 // SetStore wires the entity store used by the dashboard auth and list endpoints.
 func (s *Server) SetStore(st store.Store) { s.store = st }

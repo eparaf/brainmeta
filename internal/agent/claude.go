@@ -116,6 +116,45 @@ func (c *ClaudeLLM) Compose(ctx context.Context, convo []Turn, rc ReplyContext) 
 	return "", fmt.Errorf("claude: empty compose response")
 }
 
+const voiceToolSystemPrompt = `You are a warm phone-call assistant for an Istanbul dental clinic network. Speak naturally and briefly in the caller's language (Turkish or English) — this is a voice call, not chat. Use the available tools to check availability and book appointments; the tools are the ONLY source of truth for scheduling. NEVER state that an appointment is booked, or invent a time, unless a tool call's result confirms it. If the situation is complex or the caller is upset, use escalate_to_human.`
+
+// DecideTools runs one voice turn with tool-calling: given the conversation and
+// the brain's tool definitions, Claude may speak, call tools, or both. This is
+// the real (non-mock) implementation of voice.ToolLLM's Decide method — voice
+// package adapters wrap this so the voice channel's LLM choice mirrors the text
+// agent's (Gemini → Claude → mock, whichever key is configured).
+func (c *ClaudeLLM) DecideTools(ctx context.Context, convo []Turn, tools []Tool, clinicID string) (string, []ToolCall, error) {
+	anthTools := make([]any, len(tools))
+	for i, t := range tools {
+		anthTools[i] = map[string]any{"name": t.Name, "description": t.Description, "input_schema": t.InputSchema}
+	}
+	msgs := toAnthropicMessages(convo)
+	msgs = append(msgs, map[string]any{"role": "user",
+		"content": fmt.Sprintf("[system fact — do not alter] active clinic id: %s", clinicID)})
+	body := map[string]any{
+		"model": c.Model, "max_tokens": 512, "system": voiceToolSystemPrompt,
+		"messages": msgs, "tools": anthTools,
+	}
+	resp, err := c.call(ctx, body)
+	if err != nil {
+		return "", nil, err
+	}
+	var say string
+	var calls []ToolCall
+	for _, blk := range resp.Content {
+		switch blk.Type {
+		case "text":
+			say += blk.Text
+		case "tool_use":
+			var args map[string]any
+			if jerr := json.Unmarshal(blk.Input, &args); jerr == nil {
+				calls = append(calls, ToolCall{Name: blk.Name, Args: args})
+			}
+		}
+	}
+	return say, calls, nil
+}
+
 func toAnthropicMessages(convo []Turn) []any {
 	out := make([]any, 0, len(convo))
 	for _, t := range convo {

@@ -199,3 +199,39 @@ export const serviceSchema = z.object({
 });
 export type Service = z.infer<typeof serviceSchema>;
 export const serviceListSchema = z.array(serviceSchema);
+
+// Scenario engine — POST /v1/scenario. Offline Monte-Carlo "with this budget, how
+// many appointments per month?" forecast. Costs nothing, calls no LLM.
+export const scenarioBandSchema = z.object({
+  p10: z.number(),
+  p50: z.number(),
+  p90: z.number(),
+  mean: z.number(),
+});
+export type ScenarioBand = z.infer<typeof scenarioBandSchema>;
+
+export const scenarioFunnelSchema = z.object({
+  Qualify: z.number(),
+  Book: z.number(),
+  Show: z.number(),
+  Close: z.number(),
+});
+
+export const scenarioResultSchema = z.object({
+  runs: z.number(),
+  budget: z.number(),
+  bookedAppointments: scenarioBandSchema,
+  keptAppointments: scenarioBandSchema,
+  qualifiedLeads: scenarioBandSchema,
+  clicks: scenarioBandSchema,
+  costPerAppointmentTRY: scenarioBandSchema,
+  costPerLeadTRY: scenarioBandSchema,
+  assumptions: z.object({
+    funnel: scenarioFunnelSchema,
+    clickToLead: z.number(),
+    avgCpcTRY: z.number(),
+    searchVolume: z.number(),
+    maxImpressionShare: z.number(),
+  }),
+});
+export type ScenarioResult = z.infer<typeof scenarioResultSchema>;

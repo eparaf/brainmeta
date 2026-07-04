@@ -256,14 +256,14 @@ func (s *StorePG) ListConnections(clinicID string) []domain.Connection {
 
 func (s *StorePG) UpsertOAuthToken(t domain.OAuthToken) {
 	b, _ := json.Marshal(t)
-	s.exec(`INSERT INTO oauth_tokens(id,clinic_id,provider,data) VALUES($1,$2,$3,$4)
-	        ON CONFLICT(id) DO UPDATE SET clinic_id=EXCLUDED.clinic_id,provider=EXCLUDED.provider,data=EXCLUDED.data`,
-		t.ClinicID+":"+t.Provider, t.ClinicID, t.Provider, b)
+	s.exec(`INSERT INTO oauth_tokens(id,clinic_id,provider,phone_number_id,data) VALUES($1,$2,$3,$4,$5)
+	        ON CONFLICT(id) DO UPDATE SET clinic_id=EXCLUDED.clinic_id,provider=EXCLUDED.provider,phone_number_id=EXCLUDED.phone_number_id,data=EXCLUDED.data`,
+		oauthTokenKey(t.ClinicID, t.Provider, t.Type), t.ClinicID, t.Provider, nullIfEmpty(t.PhoneNumberID), b)
 }
 
-func (s *StorePG) GetOAuthToken(clinicID, provider string) (domain.OAuthToken, bool) {
+func (s *StorePG) GetOAuthToken(clinicID, key string) (domain.OAuthToken, bool) {
 	var b []byte
-	if err := s.db.QueryRow(`SELECT data FROM oauth_tokens WHERE id=$1`, clinicID+":"+provider).Scan(&b); err != nil {
+	if err := s.db.QueryRow(`SELECT data FROM oauth_tokens WHERE id=$1`, clinicID+":"+key).Scan(&b); err != nil {
 		return domain.OAuthToken{}, false
 	}
 	var t domain.OAuthToken
@@ -290,6 +290,26 @@ func (s *StorePG) ListOAuthTokens(provider string) []domain.OAuthToken {
 		}
 	}
 	return out
+}
+
+// ResolveClinicByPhoneNumberID uses the indexed phone_number_id column (see
+// Memory's linear-scan doc comment for why Postgres gets a real index instead).
+func (s *StorePG) ResolveClinicByPhoneNumberID(phoneNumberID string) (string, bool) {
+	if phoneNumberID == "" {
+		return "", false
+	}
+	var clinicID string
+	if err := s.db.QueryRow(`SELECT clinic_id FROM oauth_tokens WHERE phone_number_id=$1 LIMIT 1`, phoneNumberID).Scan(&clinicID); err != nil {
+		return "", false
+	}
+	return clinicID, true
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func (s *StorePG) SaveTemplate(t domain.TemplateDraft) {

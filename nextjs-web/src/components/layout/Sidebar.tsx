@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
   Building2,
+  Calculator,
   Calendar,
   ChevronDown,
   FileText,
@@ -37,6 +38,7 @@ const NAV_GROUPS = [
       { href: "/klinikler", label: "Klinikler", icon: Building2 },
       { href: "/reklam-kollari", label: "Reklam Kolları", icon: GitBranch },
       { href: "/butce", label: "Bütçe", icon: Wallet },
+      { href: "/senaryo", label: "Senaryo", icon: Calculator },
     ],
   },
   {

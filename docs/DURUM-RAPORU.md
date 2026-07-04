@@ -12,7 +12,7 @@ Karar **çekirdeği** ~%90; **üretime hazır ürün** ~%65-70.
 | Persistence | Docker/prod path zaten Postgres kullanıyordu; artık gerçek DB'ye karşı test edilmiş + CI'de doğrulanıyor | ~90 |
 | Auth/Güvenlik | Prod guard'lar + register privilege-escalation kapandı; cross-tenant scoping 8 testle kanıtlandı | ~80 |
 | Canlı outcome loop | Otomatik PMS yok (vendor-spesifik, genelleştirilemez); manuel raporlama yolu (`/v1/outcomes`) dedup+scoping bug'ları düzeltilerek güvenli hale getirildi | ~60 |
-| Onboarding (Meta Embedded Signup OAuth) | Store hazır, akış yok | ~40 |
+| Onboarding (Meta Embedded Signup OAuth) | Backend resolver + gerçek collision bug fix tamamlandı; frontend JS SDK entegrasyonu yazıldı (gerçek Meta App olmadan canlı test edilemedi) | ~75 |
 | Frontend | nextjs-web canlı; 3 kopya var | ~70 |
 
 ## 2. Güvenlik açıkları
@@ -69,11 +69,49 @@ Karar **çekirdeği** ~%90; **üretime hazır ürün** ~%65-70.
   **Kök neden bulundu ve KISMEN düzeltildi (#23, tamamlandı):** `budget.Allocate()` klinik başına GÜNDE TEK bir Thompson (Beta) örneği çekip greedy "kazanan hepsini alır" su doldurma yapıyordu (`budget.go`) — şanssız bir örnek günün %100'ünü yanlış arm'a kaydırabiliyordu. Düzeltme: `avgSampleBeta` — N=20 Beta örneğinin ortalaması, tek örnek yerine (varyansı ~√N azaltır, Thompson keşfini korur). Sonuç: 20-seed ortalama açık **%-2.2 → %-0.9**'a (üçte birinden azına), en kötü tek-seed (seed=7) **%-30.1 → %-8.5**'e düştü. Test edilen ama İYİLEŞTİRMEYEN ikincil hipotezler: N=60 (daha yüksek N monoton iyileşme vermedi — RNG akış kayması), pseudo-count 8→3 (daha KÖTÜLEŞTİRDİ, %-4.6). pseudo=8 + N=20'de bırakıldı. `TestAvgSampleBetaReducesVariance` varyans azalmasını doğruluyor. **Açık tam kapanmadı** (%-0.9 hâlâ negatif) — kalan fark muhtemelen kısa ufuk (20-30 gün) + düşük arm sayısı (klinik başı 2) nedeniyle bandit'in keşif maliyetini henüz tam amorti edememesi; daha fazla tuning yerine mevcut durumla bırakıldı (overfitting riski).
 
 **P2/P3:**
-- [ ] Meta Embedded Signup onboarding (Chatwoot kalıbı; per-phone webhook tuzağına dikkat)
-- [ ] Meta Lead Ads webhook'u tamamla (leadgen fetch)
-- [ ] LLM tool-calling'i text-agent'a bağla (appointment-agent referans)
-- [ ] Frontend tekilleştirme (front/ arşivle)
-- [ ] Panel senaryo/fizibilite kartı
+- [x] Meta Embedded Signup onboarding — **gerçek bug bulundu ve düzeltildi:** `domain.OAuthToken`'ın
+  storage anahtarı `clinicID:provider` idi; ama "whatsapp" ve "meta_ads" ikisi de `provider="meta"`'ya
+  eşleniyor — bir klinik ikisini de bağlarsa BİRİBİRİNİ EZİYORDU (sessiz veri kaybı). Düzeltme:
+  `OAuthToken.Type` alanı eklendi, anahtar artık `clinicID:type` (Type yoksa provider'a düşer,
+  geriye uyumlu). **Per-clinic resolver eklendi:** `Store.ResolveClinicByPhoneNumberID` (Memory +
+  Postgres, indeksli kolon) — `whatsapp.ParseInbound` artık `metadata.phone_number_id`'yi parse
+  ediyor, `handleWAInbound` bunu kullanıp inbound mesajı DOĞRU KLİNİĞE yönlendiriyor (önceden hep
+  ""=brain routes idi). 9 yeni test (Memory+Postgres+webhook uçtan-uca, gerçek DB'ye karşı da
+  doğrulandı). **Frontend:** `EmbeddedSignupButton.tsx` — Meta'nın dokümante JS SDK akışı
+  (FB.login + config_id + WA_EMBEDDED_SIGNUP postMessage), `/api/connections/whatsapp/
+  embedded-signup` route (kod değişimi + backend'e persist). Doğrulama: `tsc --noEmit` + `next
+  build` temiz, route'un auth/config gate'leri (401/503) gerçek HTTP ile doğrulandı. **Dürüst
+  sınır:** gerçek bir Meta App + Business + Embedded Signup config'i (App Review gerektirir)
+  olmadan JS SDK akışını uçtan uca CANLI test edemedim — kod Meta'nın dokümantasyonuna sadık
+  ama gerçek bir hesapla doğrulanmalı.
+- [x] Meta Lead Ads webhook'u tamamla — `internal/meta/leadads.go` (`LeadAdsClient.FetchLead`,
+  Graph API) + `webhooks.go`'da HMAC imza doğrulama (WhatsApp ile aynı guard, önceden YOKTU)
+  + gerçek lead'i `handleWebform` ile aynı agent akışına yönlendirme. `META_PAGE_TOKEN`
+  (yoksa `META_TOKEN`'a düşer). 7 test (imza, fetch parse, agent routing, telefon-yok,
+  PMS/token-yok skip) + canlı `serve` üzerinden gerçek Graph API'ye ulaşıldığı doğrulandı
+  (sahte token ile gerçek "Invalid OAuth access token" hatası alındı, crash yok).
+- [x] LLM tool-calling — **kapsam düzeltmesi:** text-agent'ın (`agent.Handle`) kendi deterministik
+  akışı (Qualify→merge→engine→şablon reply) zaten "LLM önerir, beyin karar verir" garantisini
+  tool-loop'suz sağlıyor ve buna dokunmak risk katardı. Gerçek boşluk: `voice.ToolLLM`
+  (get_availability/book_appointment/escalate) SADECE `voice.MockLLM` ile bağlıydı — gerçek bir
+  Claude/Gemini anahtarı olsa bile ses kanalı HER ZAMAN mock kullanıyordu. Düzeltildi:
+  `agent.ClaudeLLM.DecideTools` / `agent.GeminiLLM.DecideTools` (gerçek tool-calling, forced
+  olmayan/AUTO mod) + `voice.ClaudeToolLLM`/`GeminiToolLLM` adaptörleri (Turn tipi dönüşümü).
+  `main.go` artık voice'un LLM'ini text-agent'ın seçtiğiyle (Gemini→Claude→mock) eşliyor.
+  8 test (tool+metin parse, API-key-yok guard, uçtan-uca sahte-Claude/Gemini→gerçek booking)
+  + canlı `serve` ile doğrulandı (voice log'u text-agent'la aynı sağlayıcıyı seçti).
+  Not: `agent.LLM.Compose` metodu hâlâ hiçbir yerde çağrılmıyor (ölü kod) — kasıtlı, çünkü
+  reply'ler deterministik şablon; ayrı bir temizlik fırsatı, davranış değişikliği değil.
+- [x] Frontend tekilleştirme — `front/` → `_archived_front/` (git mv, geçmiş korunuyor).
+  Hiçbir script/Docker/CLAUDE.md onu referans etmiyordu; backend'e hiç bağlı değildi (%100 mock
+  veri), muhtemelen `nextjs-web`'in tasarım kaynağıydı. Silmek yerine arşivlendi (geri dönüşümlü).
+  `ui/` (backend test konsolu) ve `nextjs-web/` (tek canlı panel) olduğu gibi bırakıldı.
+- [x] Panel senaryo/fizibilite kartı — `nextjs-web/src/app/(dashboard)/senaryo/page.tsx`
+  (`/v1/scenario`'ya bağlı, P10/P50/P90 bandı + varsayımlar), Sidebar'a "Senaryo" nav eklendi,
+  zod şeması + `useScenario` mutation hook'u (mevcut desenlerle aynı stil). Doğrulama: `tsc
+  --noEmit` temiz, `next build` başarılı, VE gerçek uçtan-uca canlı test — Go backend +
+  Next.js dev server + gerçek NextAuth oturumu ile sayfa render edildi ve "Hesapla" butonunun
+  arkasındaki proxy (`/api/brain/v1/scenario`) gerçek Monte-Carlo verisini döndürdü.
 
 ## 5. Önerilen sıra
 P0 güvenlik (rotate + push + auth enforcement) → Faz B (Google Ads) → P1 test+persistence → no-show kalibrasyon + bandit replay → onboarding/agent.

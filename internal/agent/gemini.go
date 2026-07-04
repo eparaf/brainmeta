@@ -118,6 +118,46 @@ func (g *GeminiLLM) Compose(ctx context.Context, convo []Turn, rc ReplyContext) 
 	return "", fmt.Errorf("gemini: empty compose response")
 }
 
+// DecideTools runs one voice turn with tool-calling: given the conversation and
+// the brain's tool definitions, Gemini may speak, call tools, or both (mode
+// "AUTO" — unlike Qualify's forced call). Same real (non-mock) contract as
+// ClaudeLLM.DecideTools; voice package adapters wrap whichever is configured.
+func (g *GeminiLLM) DecideTools(ctx context.Context, convo []Turn, tools []Tool, clinicID string) (string, []ToolCall, error) {
+	fnDecls := make([]any, len(tools))
+	for i, t := range tools {
+		fnDecls[i] = map[string]any{"name": t.Name, "description": t.Description, "parameters": t.InputSchema}
+	}
+	contents := geminiContents(convo)
+	contents = append(contents, map[string]any{"role": "user",
+		"parts": []any{map[string]any{"text": fmt.Sprintf("[system fact — do not alter] active clinic id: %s", clinicID)}}})
+	body := map[string]any{
+		"systemInstruction": map[string]any{"parts": []any{map[string]any{"text": voiceToolSystemPrompt}}},
+		"contents":          contents,
+		"tools":             []any{map[string]any{"functionDeclarations": fnDecls}},
+		"toolConfig":        map[string]any{"functionCallingConfig": map[string]any{"mode": "AUTO"}},
+	}
+	resp, err := g.call(ctx, body)
+	if err != nil {
+		return "", nil, err
+	}
+	var say string
+	var calls []ToolCall
+	for _, c := range resp.Candidates {
+		for _, p := range c.Content.Parts {
+			if p.Text != "" {
+				say += p.Text
+			}
+			if p.FunctionCall != nil {
+				var args map[string]any
+				if jerr := json.Unmarshal(p.FunctionCall.Args, &args); jerr == nil {
+					calls = append(calls, ToolCall{Name: p.FunctionCall.Name, Args: args})
+				}
+			}
+		}
+	}
+	return say, calls, nil
+}
+
 func geminiContents(convo []Turn) []any {
 	out := make([]any, 0, len(convo))
 	for _, t := range convo {

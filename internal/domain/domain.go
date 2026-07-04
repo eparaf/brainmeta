@@ -260,11 +260,19 @@ type Connection struct {
 // status and is safe to return to the panel; OAuthToken is never serialised back
 // to any client. Persisted (snapshot / Postgres) so live sync survives restarts.
 type OAuthToken struct {
-	ClinicID     string    `json:"clinicId"`
-	Provider     string    `json:"provider"` // "google" | "meta"
-	RefreshToken string    `json:"refreshToken"`
-	CustomerID   string    `json:"customerId"` // Google Ads customer id (no dashes)
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ClinicID string `json:"clinicId"`
+	Provider string `json:"provider"` // "google" | "meta"
+	// Type is the CONNECTION type ("whatsapp" | "meta_ads" | "google_ads"), not
+	// just the provider. Meta has TWO connection types (whatsapp, meta_ads) that
+	// both map to Provider="meta" — storage MUST key on Type (falling back to
+	// Provider only for old rows saved before this field existed), or connecting
+	// both silently overwrites one token with the other's.
+	Type          string    `json:"type,omitempty"`
+	RefreshToken  string    `json:"refreshToken"`
+	CustomerID    string    `json:"customerId"`              // Google Ads customer id (no dashes)
+	WABAID        string    `json:"wabaId,omitempty"`        // WhatsApp Business Account id (Embedded Signup)
+	PhoneNumberID string    `json:"phoneNumberId,omitempty"` // WhatsApp phone_number_id — resolves inbound webhooks to this clinic
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 // WidgetField is one configurable field of the embeddable web form.

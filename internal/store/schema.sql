@@ -60,14 +60,22 @@ CREATE INDEX IF NOT EXISTS idx_conn_clinic ON connections(clinic_id);
 
 -- Ad-platform OAuth secrets (refresh tokens) for live spend sync. SEPARATE from
 -- `connections` (which is status-only) so secrets never leak through that surface.
+-- id is "<clinicID>:<type>" (whatsapp/meta_ads/google_ads) — NOT just provider,
+-- since whatsapp and meta_ads both have provider=meta and would collide otherwise.
 CREATE TABLE IF NOT EXISTS oauth_tokens (
-  id         TEXT PRIMARY KEY,        -- "<clinicID>:<provider>"
-  clinic_id  TEXT,
-  provider   TEXT,                    -- google | meta
-  data       JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id              TEXT PRIMARY KEY,
+  clinic_id       TEXT,
+  provider        TEXT,                    -- google | meta
+  phone_number_id TEXT,                     -- WhatsApp Cloud API number (Embedded Signup); resolves inbound webhooks to a clinic
+  data            JSONB NOT NULL,
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- CREATE TABLE IF NOT EXISTS is a no-op on a database that already has this
+-- table from before phone_number_id existed — add it explicitly so upgrading an
+-- existing deployment doesn't silently skip the new column.
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS phone_number_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_oauth_provider ON oauth_tokens(provider);
+CREATE INDEX IF NOT EXISTS idx_oauth_phone ON oauth_tokens(phone_number_id) WHERE phone_number_id IS NOT NULL AND phone_number_id != '';
 
 -- Clinic-authored WhatsApp template drafts (PENDING until Meta approves).
 CREATE TABLE IF NOT EXISTS templates (

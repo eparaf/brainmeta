@@ -264,3 +264,49 @@ func TestPostgresMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("re-running Migrate() on an existing schema should be a no-op, got: %v", err)
 	}
 }
+
+// TestPostgresOAuthTokenTypeAvoidsCollision is the Postgres counterpart of the
+// Memory-store test: whatsapp and meta_ads both have Provider="meta", so the
+// storage key MUST use Type, not just Provider, or connecting both for one
+// clinic silently overwrites one token with the other's.
+func TestPostgresOAuthTokenTypeAvoidsCollision(t *testing.T) {
+	s, p := testStore(t)
+	clinicID := p + "clinic1"
+	s.UpsertOAuthToken(domain.OAuthToken{
+		ClinicID: clinicID, Provider: "meta", Type: "whatsapp",
+		RefreshToken: "wa-token", PhoneNumberID: p + "5550001",
+	})
+	s.UpsertOAuthToken(domain.OAuthToken{
+		ClinicID: clinicID, Provider: "meta", Type: "meta_ads",
+		RefreshToken: "ads-token",
+	})
+
+	wa, ok := s.GetOAuthToken(clinicID, "whatsapp")
+	if !ok || wa.RefreshToken != "wa-token" {
+		t.Fatalf("whatsapp token overwritten or missing: %+v (ok=%v)", wa, ok)
+	}
+	ads, ok := s.GetOAuthToken(clinicID, "meta_ads")
+	if !ok || ads.RefreshToken != "ads-token" {
+		t.Fatalf("meta_ads token overwritten or missing: %+v (ok=%v)", ads, ok)
+	}
+}
+
+// TestPostgresResolveClinicByPhoneNumberID confirms the indexed
+// phone_number_id lookup works against a real database.
+func TestPostgresResolveClinicByPhoneNumberID(t *testing.T) {
+	s, p := testStore(t)
+	clinicID := p + "clinic1"
+	phoneID := p + "555999"
+	s.UpsertOAuthToken(domain.OAuthToken{
+		ClinicID: clinicID, Provider: "meta", Type: "whatsapp",
+		RefreshToken: "tok", PhoneNumberID: phoneID,
+	})
+
+	got, ok := s.ResolveClinicByPhoneNumberID(phoneID)
+	if !ok || got != clinicID {
+		t.Fatalf("expected %q, got %q (ok=%v)", clinicID, got, ok)
+	}
+	if _, ok := s.ResolveClinicByPhoneNumberID(p + "unclaimed"); ok {
+		t.Fatal("unclaimed phone_number_id should not resolve")
+	}
+}

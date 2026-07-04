@@ -346,12 +346,14 @@ func (s *Server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
 	}
 	u, _ := auth.UserFrom(r.Context())
 	var b struct {
-		ClinicID     string `json:"clinicId"`
-		Provider     string `json:"provider"` // google | meta
-		RefreshToken string `json:"refreshToken"`
-		CustomerID   string `json:"customerId"`
-		Detail       string `json:"detail"`
-		Type         string `json:"type"` // connection type to mark connected (e.g. google_ads)
+		ClinicID      string `json:"clinicId"`
+		Provider      string `json:"provider"` // google | meta
+		RefreshToken  string `json:"refreshToken"`
+		CustomerID    string `json:"customerId"`
+		Detail        string `json:"detail"`
+		Type          string `json:"type"`                    // connection type (whatsapp | meta_ads | google_ads) — also the storage key
+		WABAID        string `json:"wabaId,omitempty"`        // WhatsApp Business Account id (Embedded Signup)
+		PhoneNumberID string `json:"phoneNumberId,omitempty"` // WhatsApp phone_number_id — resolves inbound webhooks to this clinic
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
@@ -366,11 +368,14 @@ func (s *Server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.UpsertOAuthToken(domain.OAuthToken{
-		ClinicID:     b.ClinicID,
-		Provider:     b.Provider,
-		RefreshToken: b.RefreshToken,
-		CustomerID:   b.CustomerID,
-		UpdatedAt:    time.Now(),
+		ClinicID:      b.ClinicID,
+		Provider:      b.Provider,
+		Type:          b.Type,
+		RefreshToken:  b.RefreshToken,
+		CustomerID:    b.CustomerID,
+		WABAID:        b.WABAID,
+		PhoneNumberID: b.PhoneNumberID,
+		UpdatedAt:     time.Now(),
 	})
 	if b.Type != "" {
 		s.store.UpsertConnection(domain.Connection{

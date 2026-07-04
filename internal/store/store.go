@@ -58,8 +58,17 @@ type Store interface {
 	// Connection so secrets never leak through the status surface. Listed so the
 	// server can spin up a live sync per clinic that has one.
 	UpsertOAuthToken(domain.OAuthToken)
-	GetOAuthToken(clinicID, provider string) (domain.OAuthToken, bool)
+	// GetOAuthToken looks up by (clinicID, key) where key is the connection TYPE
+	// used at write time (e.g. "whatsapp", "meta_ads", "google_ads") — falls back
+	// to matching by Provider for tokens saved before Type existed. Currently
+	// unused by any caller; kept for future per-connection-type lookups.
+	GetOAuthToken(clinicID, key string) (domain.OAuthToken, bool)
 	ListOAuthTokens(provider string) []domain.OAuthToken
+	// ResolveClinicByPhoneNumberID maps a WhatsApp Cloud API phone_number_id
+	// (from an inbound webhook's metadata) back to the clinic that connected it
+	// via Embedded Signup — the per-clinic routing resolver. ok=false means no
+	// clinic has claimed that number yet (caller falls back to unscoped routing).
+	ResolveClinicByPhoneNumberID(phoneNumberID string) (clinicID string, ok bool)
 
 	// Embeddable widget config (web form + calendar). Keyed by clinic, and looked
 	// up by the public embed key on the public endpoints.
@@ -273,16 +282,27 @@ func (m *Memory) ListConnections(clinicID string) []domain.Connection {
 	return out
 }
 
+// oauthTokenKey derives the storage key: Type when present (distinguishes
+// "whatsapp" from "meta_ads" — both Provider="meta"), else Provider for
+// backward compatibility with rows saved before Type existed.
+func oauthTokenKey(clinicID, provider, typ string) string {
+	key := typ
+	if key == "" {
+		key = provider
+	}
+	return clinicID + ":" + key
+}
+
 func (m *Memory) UpsertOAuthToken(t domain.OAuthToken) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.oauthTokens[t.ClinicID+":"+t.Provider] = t
+	m.oauthTokens[oauthTokenKey(t.ClinicID, t.Provider, t.Type)] = t
 }
 
-func (m *Memory) GetOAuthToken(clinicID, provider string) (domain.OAuthToken, bool) {
+func (m *Memory) GetOAuthToken(clinicID, key string) (domain.OAuthToken, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	t, ok := m.oauthTokens[clinicID+":"+provider]
+	t, ok := m.oauthTokens[clinicID+":"+key]
 	return t, ok
 }
 
@@ -296,6 +316,22 @@ func (m *Memory) ListOAuthTokens(provider string) []domain.OAuthToken {
 		}
 	}
 	return out
+}
+
+// ResolveClinicByPhoneNumberID linear-scans the (small, per-clinic) oauth token
+// set — fine at this scale; Postgres uses an indexed column instead.
+func (m *Memory) ResolveClinicByPhoneNumberID(phoneNumberID string) (string, bool) {
+	if phoneNumberID == "" {
+		return "", false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, t := range m.oauthTokens {
+		if t.PhoneNumberID == phoneNumberID {
+			return t.ClinicID, true
+		}
+	}
+	return "", false
 }
 
 func (m *Memory) SaveTemplate(t domain.TemplateDraft) {

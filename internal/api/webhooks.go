@@ -4,12 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 
 	"disci/brain/internal/agent"
 	"disci/brain/internal/consent"
+	"disci/brain/internal/meta"
 	"disci/brain/internal/whatsapp"
 )
+
+// leadFetcher fetches the full lead (name/phone) for a Meta Lead Ads
+// leadgen_id. An interface so tests can inject a fake instead of hitting the
+// real Graph API; *meta.LeadAdsClient satisfies it.
+type leadFetcher interface {
+	FetchLead(ctx context.Context, leadgenID string) (meta.Lead, error)
+}
 
 // agentTurn runs one message through the per-phone agent session.
 func (s *Server) agentTurn(ctx context.Context, phone, clinicID, armID, msg string) (agent.Result, error) {
@@ -65,9 +74,17 @@ func (s *Server) handleWAInbound(w http.ResponseWriter, r *http.Request) {
 		if !s.consent.Allowed(in.From) {
 			continue
 		}
-		// clinic/arm: in production map the receiving phone-number-id (or the
-		// click-to-WhatsApp ad referral) to a clinic+arm. Empty → brain routes.
-		res, err := s.agentTurn(ctx, in.From, "", "", in.Text)
+		// Resolve which clinic owns the RECEIVING number (set when that clinic
+		// completed WhatsApp Embedded Signup — see handleOAuthToken). No match
+		// (number not yet claimed by any clinic, or store unset) → clinic="" and
+		// the brain routes across the marketplace, same as before this existed.
+		clinicID := ""
+		if s.store != nil && in.PhoneNumberID != "" {
+			if cid, ok := s.store.ResolveClinicByPhoneNumberID(in.PhoneNumberID); ok {
+				clinicID = cid
+			}
+		}
+		res, err := s.agentTurn(ctx, in.From, clinicID, "", in.Text)
 		if err != nil || res.Reply == "" {
 			continue
 		}
@@ -105,9 +122,27 @@ func (s *Server) handleWebform(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"reply": res.Reply, "booked": res.Decision.Booked, "apptTime": res.Decision.ApptTime})
 }
 
-// handleMetaLeads accepts Meta Lead Ads webhooks. Meta sends a leadgen id; in
-// production you fetch the full lead (name/phone) via the Graph API, then drop
-// it into the agent. Here we ack and accept the event.
+// metaLeadsPayload is the Meta Lead Ads webhook shape: an entry per Page, each
+// with a "leadgen" change carrying only the leadgen_id — the full answers
+// (name/phone) require a follow-up Graph API fetch (see leadFetcher).
+type metaLeadsPayload struct {
+	Entry []struct {
+		Changes []struct {
+			Field string `json:"field"`
+			Value struct {
+				LeadgenID string `json:"leadgen_id"`
+				FormID    string `json:"form_id"`
+				AdID      string `json:"ad_id"`
+			} `json:"value"`
+		} `json:"changes"`
+	} `json:"entry"`
+}
+
+// handleMetaLeads accepts Meta Lead Ads webhooks. The payload carries only a
+// leadgen_id; we verify the signature, ack immediately (Meta retries on any
+// non-2xx or slow response), then fetch each lead's real name/phone via the
+// Graph API and run it through the agent — the same path handleWebform uses,
+// so a Lead Ads submission gets a WhatsApp follow-up exactly like a website form.
 func (s *Server) handleMetaLeads(w http.ResponseWriter, r *http.Request) {
 	// Verification handshake reuse (Meta uses the same hub.* params).
 	if r.Method == http.MethodGet && s.cloud != nil {
@@ -116,6 +151,56 @@ func (s *Server) handleMetaLeads(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	_, _ = io.ReadAll(r.Body)
-	writeJSON(w, 200, map[string]string{"status": "received"})
+	body, _ := io.ReadAll(r.Body)
+	if !whatsapp.VerifySignature(s.appSecret, r.Header.Get("X-Hub-Signature-256"), body) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	w.WriteHeader(200) // ack fast so Meta doesn't retry
+	if s.leadAds == nil {
+		return // no Graph API token configured — nothing more we can do
+	}
+	var payload metaLeadsPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Printf("meta leads: bad payload: %v", err)
+		return
+	}
+	ctx := r.Context()
+	for _, e := range payload.Entry {
+		for _, ch := range e.Changes {
+			if ch.Field != "leadgen" || ch.Value.LeadgenID == "" {
+				continue
+			}
+			s.handleOneMetaLead(ctx, ch.Value.LeadgenID)
+		}
+	}
+}
+
+// handleOneMetaLead fetches one lead's real data and routes it into the agent
+// (clinic/arm unresolved here — same "brain routes" convention as WhatsApp
+// inbound; map ad_id/form_id → clinic+arm once that config surface exists).
+func (s *Server) handleOneMetaLead(ctx context.Context, leadgenID string) {
+	lead, err := s.leadAds.FetchLead(ctx, leadgenID)
+	if err != nil {
+		log.Printf("meta leads: fetch %s: %v", leadgenID, err)
+		return
+	}
+	if lead.Phone == "" {
+		log.Printf("meta leads: %s had no phone number in field_data", leadgenID)
+		return
+	}
+	if s.agent == nil {
+		return
+	}
+	msg := "Meta reklamından randevu talebi"
+	if lead.Name != "" {
+		msg = lead.Name + " — " + msg
+	}
+	res, err := s.agentTurn(ctx, lead.Phone, "", "", msg)
+	if err != nil || res.Reply == "" {
+		return
+	}
+	if s.cloud != nil && s.consent.Allowed(lead.Phone) {
+		_ = s.cloud.SendText(ctx, lead.Phone, res.Reply)
+	}
 }

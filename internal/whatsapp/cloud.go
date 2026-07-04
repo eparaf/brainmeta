@@ -132,9 +132,10 @@ func (c *Cloud) VerifyWebhook(q url.Values) (string, bool) {
 
 // Inbound is a normalised inbound WhatsApp message.
 type Inbound struct {
-	From string // sender phone (wa id)
-	Text string
-	Name string // profile name if present
+	From          string // sender phone (wa id)
+	Text          string
+	Name          string // profile name if present
+	PhoneNumberID string // the RECEIVING business number's phone_number_id — resolves which clinic this belongs to
 }
 
 // ParseInbound extracts inbound text messages from a webhook payload.
@@ -143,6 +144,9 @@ func ParseInbound(body []byte) ([]Inbound, error) {
 		Entry []struct {
 			Changes []struct {
 				Value struct {
+					Metadata struct {
+						PhoneNumberID string `json:"phone_number_id"`
+					} `json:"metadata"`
 					Contacts []struct {
 						Profile struct {
 							Name string `json:"name"`
@@ -172,7 +176,10 @@ func ParseInbound(body []byte) ([]Inbound, error) {
 			}
 			for _, m := range ch.Value.Messages {
 				if m.Type == "text" {
-					out = append(out, Inbound{From: m.From, Text: m.Text.Body, Name: name})
+					out = append(out, Inbound{
+						From: m.From, Text: m.Text.Body, Name: name,
+						PhoneNumberID: ch.Value.Metadata.PhoneNumberID,
+					})
 				}
 			}
 		}

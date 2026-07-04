@@ -79,6 +79,9 @@ Reklam → WhatsApp AI ajanı → niteleme → beyin karar → randevu → hatı
     bandit (Thompson+water-filling) ROAS'ta naif eşit-bölmeyi YENMİYOR (~%-2/-3, tek seed'de
     %-30'a kadar). Kök neden araştırması sürüyor (bkz. docs/DURUM-RAPORU.md). Bu motoru
     "kanıtlanmış üstün" varsayma — `brain compare` ile doğrulamadan production tuning değiştirme.
+16. **`OAuthToken` anahtarı `Type`'a göre, `Provider`'a göre DEĞİL.** whatsapp+meta_ads ikisi de
+    Provider="meta" — Type'ı unutup Provider'a dönersen iki bağlantı türü birbirini eziyor (bkz.
+    `internal/store/store.go`'daki `oauthTokenKey`).
 
 ## Çalıştırma
 ```
@@ -119,13 +122,17 @@ tipi önerilir — Web tipinde `http://127.0.0.1:8765/` redirect'i eklenmeli),
 `CUSTOMER_NOT_ENABLED`/`PERMISSION_DENIED` döner; test manager: ads.google.com/nav/selectaccount?sf=mt).
 
 ## Durum & yol haritası
-Güncel tamamlanmışlık + öncelikli to-do listesi: **`docs/DURUM-RAPORU.md`**. Özet:
-- **Bitti:** P0 auth sertleştirme (privilege-escalation kapatıldı, prod guard'lar), senaryo motoru
-  (Faz A+B), no-show Platt kalibrasyonu, bandit change-detection + offline-replay harness, bandit
-  varyans azaltma (avgSampleBeta), Postgres store'un gerçek DB'ye karşı testi (9 entegrasyon testi
-  + CI'de Postgres service container — `Dockerfile`/`docker-compose.yml` zaten `-tags pgx redis`
-  ile prod default'tu, eksik olan test kapsamıydı).
-- **Sırada (P1):** canlı outcome/PMS loop'unu bağlamak, API clinic-scoping test kapsamını genişletmek.
-- **Sonra (P2):** per-clinic **Connection store** (UI'dan Meta/WhatsApp/Google bağlama) + Meta
-  Embedded Signup OAuth (resolver + tablo + onboarding), Meta Lead Ads webhook'unu tamamlamak,
-  LLM tool-calling'i text-agent'a bağlamak, 3 frontend'i tekilleştirmek (`front/` arşivlenecek).
+Güncel tamamlanmışlık + öncelikli to-do listesi: **`docs/DURUM-RAPORU.md`**. Tüm P0/P1/P2/P3
+görevleri tamamlandı (14 madde). Özet:
+- P0 auth sertleştirme (privilege-escalation kapatıldı, prod guard'lar) · senaryo motoru (Faz A+B)
+  · no-show Platt kalibrasyonu · bandit change-detection + offline-replay harness + varyans
+  azaltma (avgSampleBeta) · Postgres store gerçek-DB testleri · API clinic-scoping testleri (8
+  cross-tenant) · outcome-loop dedup/scoping bug fix · Meta Lead Ads webhook (gerçek Graph API
+  fetch + imza doğrulama) · voice kanalının gerçek LLM tool-calling'e bağlanması · `front/` arşivi
+  · panelde senaryo/fizibilite kartı · **Meta Embedded Signup + per-clinic WhatsApp routing
+  resolver** (`OAuthToken.Type` — whatsapp/meta_ads'in `provider="meta"` çakışma bug'ı düzeltildi;
+  `ResolveClinicByPhoneNumberID` inbound webhook'u doğru kliniğe yönlendiriyor; frontend Embedded
+  Signup JS SDK gerçek Meta App olmadan test edilemedi, koda dikkat).
+16. **`OAuthToken` anahtarı `Type`'a göre, `Provider`'a göre DEĞİL.** whatsapp+meta_ads ikisi de
+    Provider="meta" — Type'ı unutup Provider'a dönersen iki bağlantı türü birbirini eziyor (bkz.
+    `internal/store/store.go`'daki `oauthTokenKey`).

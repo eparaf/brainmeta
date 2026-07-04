@@ -9,6 +9,7 @@ import {
   budgetPlanSchema,
   clinicListSchema,
   connectionListSchema,
+  scenarioResultSchema,
   connectionSchema,
   conversationListSchema,
   conversationSchema,
@@ -245,5 +246,20 @@ export function useSendMessage() {
       qc.invalidateQueries({ queryKey: ["conversations", vars.clinicId] });
       qc.invalidateQueries({ queryKey: ["conversation"] });
     },
+  });
+}
+
+// Scenario engine: offline "with this budget, how many appointments?" forecast.
+// A mutation (not a query) because it's a what-if the user triggers explicitly
+// with a chosen budget, not data to auto-fetch on mount.
+export function useScenario() {
+  return useMutation({
+    mutationFn: (body: {
+      clinicId?: string;
+      segment?: string;
+      platform?: string;
+      audience?: string;
+      monthlyBudget: number;
+    }) => jpost("/api/brain/v1/scenario", body, scenarioResultSchema),
   });
 }

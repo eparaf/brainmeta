@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { QueryBoundary } from "@/components/ui/QueryBoundary";
 import { GoogleAdsIcon, MetaIcon, WhatsAppIcon } from "@/components/layout/Icons";
+import { EmbeddedSignupButton } from "@/components/connections/EmbeddedSignupButton";
 import type { Connection } from "@/lib/brain/schemas";
 
 const META: Record<
@@ -158,6 +159,18 @@ export default function BaglantilarPage() {
                     >
                       Kes
                     </Button>
+                  ) : c.type === "whatsapp" && clinicId ? (
+                    <EmbeddedSignupButton
+                      clinicId={clinicId}
+                      onDone={(result) => {
+                        setNotice(
+                          result.ok
+                            ? { ok: true, text: "WhatsApp bağlantısı kuruldu." }
+                            : { ok: false, text: result.error ?? "Bağlantı kurulamadı." },
+                        );
+                        if (result.ok) q.refetch();
+                      }}
+                    />
                   ) : (
                     <Button disabled={upsert.isPending} onClick={() => connect(c.type, meta?.oauth ?? false)}>
                       Bağla
